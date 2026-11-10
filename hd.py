@@ -566,50 +566,158 @@ document.getElementById('cf').onsubmit=async e=>{e.preventDefault();
   try{const r=await fetch('/api/hd/comment',{method:'POST',headers:{'Content-Type':'application/json','X-HD-Token':tok()},body:JSON.stringify({slug:SLUG,text:t.value})});
     const d=await r.json().catch(()=>({})); if(!r.ok)throw new Error(d.error||r.status);
     document.getElementById('nocm')?.remove();
-    document.getElementById('cm').insertAdjacentHTML('beforeend',`<div class=cm><div class=ch>${esc(d.name||d.contact)} · ${esc(d.at)}</div><pre>${esc(d.text)}</pre></div>`);
+    const nm=d.name||d.contact||'';const ini=(nm.split(/[\s(@:]+/).filter(Boolean).slice(0,2).map(x=>x[0]).join('')||'?').toUpperCase();
+    document.getElementById('cm').insertAdjacentHTML('beforeend',`<div class=cm><div class=av>${esc(ini)}</div><div class=bub><div class=ch>${esc(nm)} · ${esc(d.at)}</div><pre>${esc(d.text)}</pre></div></div>`);
+    const n=document.getElementById('cmn'); if(n) n.textContent=+n.textContent+1;
     t.value=''; s.textContent='Отправлено';
   }catch(err){s.textContent='Не отправилось: '+err.message}finally{b.disabled=false}};
 '''
 
 
+CARD_CSS = """
+:root{--bg:#F3F4F8;--card:#FFFFFF;--ink:#0B0E24;--muted:#7C7F95;--line:#E3E5EE;--brand:#343A7E;--brand-soft:#ECEDF6;
+  --accent:#FF5722;--ok:#1E8E5A;--warn:#E08A00;--err:#D32F2F;--head:#343A7E;--input:#FFFFFF;--shadow:0 1px 2px rgba(11,14,36,.05),0 8px 28px rgba(11,14,36,.06);color-scheme:light}
+:root[data-theme="dark"]{--bg:#0D0F1E;--card:#161935;--ink:#E8E9F3;--muted:#9799B3;--line:#2A2E4D;--brand:#A3AAFF;--brand-soft:#23274A;
+  --accent:#FF6E40;--ok:#4CC38A;--warn:#F2B04C;--err:#FF6B6B;--head:#CDD1FF;--input:#11142A;--shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.55 'Fira Sans',Arial,sans-serif;transition:background .25s,color .25s}
+a{color:var(--brand)}
+.top{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.top .in{max-width:1100px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px}
+.mark{width:30px;height:30px;border-radius:8px;background:var(--brand);color:var(--card);display:grid;place-items:center;font:700 14px 'Fira Sans';text-decoration:none}
+.crumb{color:var(--muted);font-size:14px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.crumb a{color:var(--muted);text-decoration:none}.crumb a:hover{color:var(--brand)}
+.tb{font:500 13px 'Fira Sans',Arial,sans-serif;color:var(--brand);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 11px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.tb:hover{border-color:var(--brand)}
+.w{max-width:1100px;margin:0 auto;padding:22px 16px 60px}
+.hero{background:var(--card);border-radius:16px;padding:22px 24px;box-shadow:var(--shadow);position:relative;overflow:hidden;margin-bottom:18px}
+.hero:before{content:"";position:absolute;inset:0 auto 0 0;width:5px;background:var(--line)}
+.hero.u-high:before{background:var(--warn)}.hero.u-fire:before{background:var(--err)}
+.hero.hot{box-shadow:0 0 0 2px var(--accent),0 10px 34px color-mix(in srgb,var(--accent) 30%,transparent)}
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.pill{font:500 12px 'Fira Sans',Arial,sans-serif;padding:3px 10px;border-radius:100px;background:var(--brand-soft);color:var(--brand)}
+.pill.st-new{background:color-mix(in srgb,var(--brand) 14%,transparent)}.pill.st-work{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.pill.st-done{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}.pill.st-draft{border:1px dashed var(--muted);background:transparent;color:var(--muted)}
+.pill.st-archived,.pill.st-rejected{background:var(--line);color:var(--muted)}
+.pill.u-high{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}.pill.u-fire{background:var(--err);color:#fff}
+.pill.top5{background:var(--accent);color:#fff}
+.num{color:var(--muted);font:500 15px 'Fira Sans';margin-right:6px}
+h1{font:600 26px/1.25 'Fira Sans',Arial,sans-serif;color:var(--ink);margin:0}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px 18px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.meta div{min-width:0}.meta b{display:block;font:500 11px 'Fira Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.meta span{word-wrap:break-word}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+.c{background:var(--card);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow);margin-bottom:18px}
+.c h2{font:600 13px 'Fira Sans';letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;display:flex;justify-content:space-between}
+.txt{white-space:pre-wrap;word-wrap:break-word;margin:0;font:inherit}
+.txt a{word-break:break-all}
+.links a{display:block;padding:7px 10px;border-radius:8px;background:var(--brand-soft);margin-bottom:6px;text-decoration:none;word-break:break-all;font-size:14px}
+.links a:hover{outline:1px solid var(--brand)}
+.files a{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;margin:0 6px 6px 0;text-decoration:none;font-size:14px}
+.tl{list-style:none;margin:0;padding:0;position:relative}
+.tl:before{content:"";position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:var(--line)}
+.tl li{position:relative;padding:0 0 14px 22px;font-size:14px}.tl li:last-child{padding-bottom:0}
+.tl li:before{content:"";position:absolute;left:1px;top:5px;width:12px;height:12px;border-radius:50%;background:var(--card);border:2px solid var(--brand)}
+.tl time{display:block;color:var(--muted);font-size:12px}
+.cm{display:flex;gap:10px;margin-bottom:14px}
+.av{flex:none;width:34px;height:34px;border-radius:50%;background:var(--brand-soft);color:var(--brand);display:grid;place-items:center;font:600 13px 'Fira Sans'}
+.bub{background:var(--brand-soft);border-radius:4px 14px 14px 14px;padding:9px 12px;min-width:0;flex:1}
+.ch{color:var(--muted);font-size:12px;margin-bottom:3px}.bub pre{white-space:pre-wrap;word-wrap:break-word;margin:0;font:inherit;font-size:15px}
+.mu{color:var(--muted);font-size:14px}
+textarea{width:100%;min-height:96px;font:inherit;font-size:16px;color:inherit;background:var(--input);padding:11px 12px;border:1px solid var(--line);border-radius:10px;resize:vertical}
+textarea:focus{outline:none;border-color:var(--brand)}
+.cr{display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:10px}
+.btn{border:0;border-radius:9px;padding:10px 18px;min-height:42px;background:var(--accent);color:#fff;font:500 15px 'Fira Sans',Arial,sans-serif;cursor:pointer}
+.btn:disabled{opacity:.5}
+@media (max-width:600px){h1{font-size:21px}.hero{padding:18px 16px}.c{padding:16px 14px}.w{padding:16px 12px 50px}.tb.hide-m{display:none}}
+"""
+
+URL_RE = re.compile(r'https?://[^\s<>«»"]+')
+
+
+def linkify(text: str) -> str:
+    out, last = [], 0
+    for m in URL_RE.finditer(text):
+        u = m.group(0).rstrip('.,;:)')
+        out.append(html.escape(text[last:m.start()]))
+        out.append(f"<a href='{html.escape(u)}' target=_blank rel=noopener>{html.escape(u)}</a>")
+        last = m.start() + len(u)
+    out.append(html.escape(text[last:]))
+    return ''.join(out)
+
+
+def initials(name: str) -> str:
+    parts = [p for p in re.split(r'[\s(@:]+', name or '') if p]
+    return (''.join(p[0] for p in parts[:2]) or '?').upper()
+
+
 def page_request(r: dict) -> str:
     e = html.escape
-    rows = [('Автор', ' '.join(x for x in (r['author'], f"({r['contact']})") if x)), ('Кому', r['to']),
-            ('Тип', CHOICES['kind'][r['kind']]), ('Контур', CHOICES['contour'][r['contour']]),
-            ('Срочность', CHOICES['urgency'][r['urgency']]), ('Нужно к', r['due']),
-            ('Создана', f"{r['created']} · {r['source']}"),
-            ('Статус', STATUSES.get(r.get('status', 'new'), ''))]
-    blocks = [('Описание', r.get('details') or merge_legacy(r).get('details', '')), ('Ссылки', r['links']),
-              ('История', '\n'.join(f"{h['at']} — {STATUSES.get(h['status'], h['status'])}"
-                                     + (f": {h['comment']}" if h.get('comment') else '')
-                                     for h in r.get('history', [])))]
-    files = ''.join(f"<li><a href='/r/{e(r['slug'])}/{e(urllib.parse.quote(n))}'>{e(n)}</a></li>" for n in r['files'])
-    return (f"<!doctype html><html lang=ru><head><meta charset=utf-8>"
-            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"<title>Заявка №{r['id']}</title><style>"
-            "body{margin:0;background:#F5F5F5;color:#050819;font:16px/1.45 'Fira Sans',Arial,sans-serif}"
-            ".w{max-width:820px;margin:0 auto;padding:24px 16px}.c{background:#fff;border-radius:8px;padding:20px;margin-bottom:14px}"
-            "h1{color:#343A7E;font-size:22px;margin:0 0 14px}h2{color:#343A7E;font-size:15px;margin:0 0 8px}"
-            "td{padding:3px 12px 3px 0;vertical-align:top}td:first-child{color:#85868A}pre{white-space:pre-wrap;margin:0;font:inherit}"
-            "a{color:#343A7E}.cm{border-top:1px solid #E0E0E8;padding:10px 0}.cm:first-child{border-top:0}"
-            ".ch{color:#85868A;font-size:13px;margin-bottom:4px}.mu{color:#85868A;font-size:14px}"
-            "textarea{width:100%;box-sizing:border-box;min-height:90px;font:inherit;padding:9px;border:1px solid #E0E0E8;border-radius:8px;margin-top:10px}"
-            ".cr{display:flex;justify-content:space-between;align-items:center;margin-top:8px}"
-            "button{border:0;border-radius:8px;padding:9px 18px;background:#FF5722;color:#fff;font:500 15px 'Fira Sans',Arial,sans-serif;cursor:pointer}"
-            "button:disabled{opacity:.5}</style></head><body><div class=w>"
-            f"<h1>Заявка DevOps №{r['id']}: {e(r['title'])}</h1><div class=c><table>"
-            + ''.join(f'<tr><td>{k}</td><td>{e(v)}</td></tr>' for k, v in rows if v)
-            + '</table></div>'
-            + ''.join(f'<div class=c><h2>{k}</h2><pre>{e(v)}</pre></div>' for k, v in blocks if v)
-            + (f'<div class=c><h2>Файлы</h2><ul>{files}</ul></div>' if files else '')
-            + "<div class=c><h2>Комментарии</h2><div id=cm>"
-            + (''.join(f"<div class=cm><div class=ch>{e(c['name'] or c['contact'])} · {e(c['at'])}</div><pre>{e(c['text'])}</pre></div>"
-                       for c in r.get('comments', [])) or "<p class=mu id=nocm>Пока нет</p>")
+    st = r.get('status', 'new')
+    bdef = boards().get(r.get('board') or '', {})
+    cols = {**COLS_DEFAULT, **bdef.get('columns', {})}
+    st_label = cols.get(st) or STATUSES.get(st, st)
+    back = '/tasks' + (f"/{r['board']}" if r.get('board') else '')
+    btitle = bdef.get('title') or 'Задачи'
+    urg = r.get('urgency', 'normal')
+    pills = [f"<span class='pill st-{e(st)}'>{e(st_label)}</span>"]
+    if r.get('highlight'):
+        pills.insert(0, "<span class='pill top5'>Топ-5</span>")
+    if urg != 'normal':
+        pills.append(f"<span class='pill u-{e(urg)}'>{e(CHOICES['urgency'].get(urg, urg))}</span>")
+    for k in ('contour', 'kind'):
+        if r.get(k) and r[k] != 'unknown':
+            pills.append(f"<span class=pill>{e(CHOICES[k].get(r[k], r[k]))}</span>")
+    meta = [('Автор', ' '.join(x for x in (r.get('author'), f"({r['contact']})" if r.get('contact') else '') if x)),
+            ('Кому', r.get('to')), ('Нужно к', r.get('due')), ('Создана', r.get('created')),
+            ('Источник', r.get('source')),
+            ('Открыта', (r.get('opened') or {}).get('by', '') + (' · ' + (r.get('opened') or {}).get('at', '') if r.get('opened') else ''))]
+    details = r.get('details') or merge_legacy(r).get('details', '')
+    links = [l.strip() for l in (r.get('links') or '').splitlines() if l.strip()]
+    files = ''.join(f"<a href='/r/{e(r['slug'])}/{e(urllib.parse.quote(n))}' target=_blank>{e(n)}</a>" for n in r.get('files', []))
+    hist = ''.join(f"<li><time>{e(h['at'])}</time>{e(cols.get(h['status']) or STATUSES.get(h['status'], h['status']))}"
+                   + (f" — {linkify(h['comment'])}" if h.get('comment') else '') + "</li>" for h in reversed(r.get('history', [])))
+    hist += f"<li><time>{e(r.get('created', ''))}</time>Создана</li>"
+    comments = ''.join(
+        f"<div class=cm><div class=av>{e(initials(c.get('name') or c.get('contact', '')))}</div><div class=bub>"
+        f"<div class=ch>{e(c.get('name') or c.get('contact', ''))} · {e(c.get('at', ''))}</div><pre>{linkify(c.get('text', ''))}</pre></div></div>"
+        for c in r.get('comments', []))
+    return ("<!doctype html><html lang=ru data-theme=light><head><meta charset=utf-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1,viewport-fit=cover'>"
+            f"<title>№{r['id']} {e(r['title'])}</title>"
+            "<link rel=preconnect href='https://fonts.googleapis.com'><link href='https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&display=swap' rel=stylesheet>"
+            "<script>try{if(localStorage.getItem('hd-theme')==='dark')document.documentElement.dataset.theme='dark'}catch(_){}</script>"
+            f"<style>{CARD_CSS}</style></head><body>"
+            f"<header class=top><div class=in><a class=mark href='{e(back)}' title='К доске'>hd</a>"
+            f"<div class=crumb><a href='{e(back)}'>{e(btitle)}</a> / №{r['id']}</div>"
+            "<button class='tb hide-m' id=copy type=button>Скопировать ссылку</button>"
+            "<button class=tb id=theme type=button>Тёмная тема</button></div></header>"
+            "<main class=w>"
+            f"<section class='hero u-{e(urg)}{' hot' if r.get('highlight') else ''}'><div class=pills>{''.join(pills)}</div>"
+            f"<h1><span class=num>№{r['id']}</span>{e(r['title'])}</h1>"
+            "<div class=meta>" + ''.join(f"<div><b>{k}</b><span>{e(v)}</span></div>" for k, v in meta if v) + "</div></section>"
+            "<div class=grid><div>"
+            + (f"<section class=c><h2>Описание</h2><pre class=txt>{linkify(details)}</pre></section>" if details else '')
+            + (f"<section class=c><h2>Ссылки <span>{len(links)}</span></h2><div class=links>"
+               + ''.join(f"<a href='{e(l)}' target=_blank rel=noopener>{e(l)}</a>" if URL_RE.fullmatch(l) else f"<div class=mu>{e(l)}</div>" for l in links)
+               + "</div></section>" if links else '')
+            + (f"<section class=c><h2>Файлы</h2><div class=files>{files}</div></section>" if files else '')
+            + f"<section class=c><h2>Комментарии <span id=cmn>{len(r.get('comments', []))}</span></h2><div id=cm>"
+            + (comments or "<p class=mu id=nocm>Пока нет. Будьте первым.</p>")
             + "</div><form id=cf><textarea id=ct maxlength=4000 placeholder='Комментарий…'></textarea>"
-            + "<div class=cr><span class=mu id=cs></span><button id=cb>Отправить</button></div></form>"
-            + "<p class=mu id=cl hidden>Чтобы комментировать, <a href='/'>войдите через Telegram</a>.</p></div>"
-            + "<p><a href='/tasks'>← Задачи</a> · <a href='/'>Новая заявка</a></p></div>"
-            + f"<script>const SLUG={json.dumps(r['slug'])};" + COMMENT_JS + "</script></body></html>")
+            "<div class=cr><span class=mu id=cs></span><button class=btn id=cb>Отправить</button></div></form>"
+            "<p class=mu id=cl hidden>Чтобы комментировать, <a href='/'>войдите через Telegram</a>.</p></section>"
+            f"</div><aside><section class=c><h2>История</h2><ul class=tl>{hist}</ul></section></aside></div></main>"
+            f"<script>const SLUG={json.dumps(r['slug'])};" + COMMENT_JS + CARD_JS + "</script></body></html>")
+
+
+CARD_JS = r"""
+(()=>{const t=document.getElementById('theme');const show=()=>{t.textContent=document.documentElement.dataset.theme==='dark'?'Светлая тема':'Тёмная тема'};show();
+t.onclick=()=>{const d=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=d?'dark':'light';try{localStorage.setItem('hd-theme',d?'dark':'light')}catch(_){};show()};
+const c=document.getElementById('copy');c&&(c.onclick=async()=>{try{await navigator.clipboard.writeText(location.href);c.textContent='Скопировано';setTimeout(()=>c.textContent='Скопировать ссылку',1600)}catch(_){prompt('Ссылка:',location.href)}});
+const ct=document.getElementById('ct');ct&&ct.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();document.getElementById('cb').click()}});
+})();
+"""
 
 
 # --- админка -----------------------------------------------------------------
