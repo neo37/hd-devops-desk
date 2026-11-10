@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+data/
+*.env
+.env*
+!hdbot.env.example
+infra-brief.md
+logo.glb
+apikeys.json
+admin.json
+tools/.sanitize_local.py

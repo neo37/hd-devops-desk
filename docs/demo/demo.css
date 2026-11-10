@@ -1,0 +1,30 @@
+/* Плашка демо и мелочи, общие для demo/tasks.html и demo/form.html */
+.demo-bar{position:sticky;top:0;z-index:60;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 14px;
+  padding:8px 16px;background:var(--brand);color:var(--on-brand);font:500 13px/1.35 'Fira Sans',Arial,sans-serif;text-align:center}
+.demo-bar b{font-weight:600}
+.demo-bar a,.demo-bar button{color:inherit;font:inherit;background:none;border:1px solid currentColor;border-radius:100px;
+  padding:3px 10px;cursor:pointer;text-decoration:none;opacity:.92;white-space:nowrap}
+.demo-bar a:hover,.demo-bar button:hover{opacity:1}
+.demo-logo{width:34px;height:34px;flex:none;color:var(--brand)}
+@media (max-width:640px){.demo-logo{width:30px;height:30px}}
+
+/* карточка заявки (вместо страницы /r/<slug>) */
+#demoView{border:0;border-radius:12px;padding:0;width:min(680px,calc(100vw - 24px));max-height:calc(100vh - 32px);background:var(--card);color:var(--ink)}
+#demoView::backdrop{background:rgba(5,8,25,.45)}
+#demoView .dv{padding:20px}
+#demoView h3{margin:0 0 6px;color:var(--head);font:600 19px/1.25 'Fira Sans',Arial,sans-serif}
+#demoView .dv-m{color:var(--muted);font-size:13px;margin:0 0 12px}
+#demoView .dv-tags{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+#demoView .dv-tags span{background:var(--brand-soft);color:var(--brand);border-radius:100px;padding:2px 10px;font-size:12px}
+#demoView pre{white-space:pre-wrap;word-wrap:break-word;font:400 14px/1.5 'Fira Sans',Arial,sans-serif;margin:0 0 14px;
+  background:var(--bg);border-radius:8px;padding:12px}
+#demoView h4{margin:14px 0 6px;font:600 14px 'Fira Sans',Arial,sans-serif;color:var(--head)}
+#demoView .dv-c{border-top:1px solid var(--line);padding:8px 0;font-size:14px}
+#demoView .dv-c i{color:var(--muted);font-style:normal;font-size:12px;display:block}
+#demoView .dv-f{display:flex;gap:8px;margin-top:10px}
+#demoView .dv-f input{flex:1;min-width:0;font:inherit;font-size:16px;color:inherit;background:var(--input);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+#demoView .dv-a{display:flex;justify-content:flex-end;margin-top:16px}
+/* ?shot=1 — для скриншотов: без прелоадера и анимаций */
+html.shot #pre{display:none}
+html.shot *{animation:none!important;transition:none!important}
+@media (max-width:640px){.demo-bar{font-size:12px;padding:6px 12px}.demo-bar>span+span{display:none}}

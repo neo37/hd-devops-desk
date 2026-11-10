@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Задачи DevOps</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F5F5F5; --card:#FFFFFF; --ink:#050819; --muted:#85868A; --line:#E0E0E8;
+  --brand:#343A7E; --brand-soft:#E7E7F0; --accent:#FF5722; --err:#C62828; --input:#FFFFFF;
+  --col:#ECECF3; --head:#343A7E; --on-brand:#FFFFFF; color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --bg:#0E1020; --card:#171A2E; --ink:#E8E9F3; --muted:#9A9CB3; --line:#2B2F4A;
+  --brand:#9EA6FF; --brand-soft:#252A48; --accent:#FF6E40; --err:#FF6B6B; --input:#11142A;
+  --col:#131628; --head:#C9CDFF; --on-brand:#0E1020; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.4 'Fira Sans',Arial,sans-serif;transition:background .25s,color .25s}
+.wrap{max-width:1300px;margin:0 auto;padding:16px 16px calc(32px + env(safe-area-inset-bottom))}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+h1{font:600 22px/1.2 'Fira Sans',Arial,sans-serif;color:var(--head);margin:0}
+nav{display:flex;gap:8px}
+.nav-link,.theme-btn{font:500 14px 'Fira Sans',Arial,sans-serif;color:var(--brand);text-decoration:none;background:var(--card);
+  border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;min-height:38px;display:inline-flex;align-items:center}
+.sub{color:var(--muted);margin:0 0 14px;font-size:14px}
+.board{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
+@media (max-width:1100px){.board{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:640px){.board{grid-template-columns:1fr}}
+.col[data-status="draft"]{background:repeating-linear-gradient(135deg,var(--col),var(--col) 10px,var(--brand-soft) 10px,var(--brand-soft) 11px)}
+.col[data-status="draft"] .card{border-style:dashed;border-left-style:solid}
+.col{background:var(--col);border-radius:12px;padding:10px;min-height:160px;transition:outline-color .15s,background .15s;outline:2px dashed transparent}
+.col.over{outline-color:var(--brand);background:var(--brand-soft)}
+.col h2{font:600 14px 'Fira Sans',Arial,sans-serif;color:var(--head);margin:4px 6px 10px;display:flex;justify-content:space-between}
+.col h2 span{color:var(--muted);font-weight:400}
+.empty{color:var(--muted);font-size:13px;text-align:center;padding:18px 6px}
+.card{background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:4px solid var(--line);
+  box-shadow:0 1px 2px rgba(5,8,25,.06);touch-action:pan-y;user-select:none;-webkit-user-select:none}
+.card.movable{cursor:grab}
+.card.u-high{border-left-color:#FF9800}.card.u-fire{border-left-color:var(--err)}
+.card .t{font-weight:500}
+.card.hot{border:2px solid var(--accent);border-left-width:6px;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent),0 6px 24px color-mix(in srgb,var(--accent) 35%,transparent);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 9%,var(--card)),var(--card));animation:hotpulse 2.6s ease-in-out infinite}
+@keyframes hotpulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 14%,transparent),0 8px 30px color-mix(in srgb,var(--accent) 45%,transparent)}}
+.top5{display:inline-block;background:var(--accent);color:#fff;font-size:11px;font-weight:600;border-radius:100px;padding:1px 8px;margin-right:6px;vertical-align:1px}
+.unseen{display:inline-block;font-size:11px;font-weight:500;color:var(--accent);border:1px solid var(--accent);border-radius:100px;padding:0 6px;margin-left:4px;vertical-align:1px}
+.card .m{color:var(--muted);font-size:12px;margin-top:4px}
+.card .a{display:flex;gap:12px;margin-top:8px;font-size:13px}
+.card .a a,.card .a button{color:var(--brand);background:none;border:0;padding:0;font:inherit;cursor:pointer;text-decoration:none}
+.card.ghost{opacity:.35}
+.drag{position:fixed;z-index:30;pointer-events:none;transform:rotate(2deg);box-shadow:0 10px 30px rgba(5,8,25,.25);opacity:.95}
+.msg{background:var(--card);border-radius:10px;padding:18px;text-align:center}
+.btn{border:0;border-radius:8px;padding:10px 18px;min-height:42px;font:500 15px 'Fira Sans',Arial,sans-serif;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.ghost{background:none;border:1px solid var(--brand);color:var(--brand)}
+.skel{height:74px;border-radius:10px;margin-bottom:8px;background:linear-gradient(100deg,var(--card) 30%,var(--brand-soft) 50%,var(--card) 70%);
+  background-size:200% 100%;animation:shim 1.3s linear infinite}
+@keyframes shim{to{background-position:-200% 0}}
+/* правка */
+dialog{border:0;border-radius:12px;padding:0;width:min(640px,calc(100vw - 24px));background:var(--card);color:var(--ink)}
+dialog::backdrop{background:rgba(5,8,25,.45)}
+dialog form{padding:18px}
+dialog h3{margin:0 0 10px;color:var(--head)}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input,select,textarea{width:100%;font:inherit;font-size:16px;color:inherit;background:var(--input);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+textarea{min-height:180px;resize:vertical}
+.row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+@media (max-width:560px){.row{grid-template-columns:1fr}}
+.dlg-a{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;z-index:40}
+.toast.on{opacity:1}
+@media (prefers-reduced-motion:reduce){*{animation-duration:0s!important}}
+
+/* 3D-логотип и прелоадер */
+#pre{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .45s ease,visibility .45s}
+#pre.gone{opacity:0;visibility:hidden}
+#pre model-viewer{width:300px;height:170px;--poster-color:transparent;background:transparent}
+#pre .pre-t{font:500 14px 'Fira Sans',Arial,sans-serif;color:var(--muted);letter-spacing:.02em}
+#pre .pre-bar{width:160px;height:3px;border-radius:3px;background:var(--brand-soft);overflow:hidden}
+#pre .pre-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--brand));transition:width .2s}
+.logo3d{width:120px;height:44px;flex:none;--poster-color:transparent;background:transparent}
+.brand{display:flex;align-items:center;gap:10px}
+@media (max-width:640px){.logo3d{width:96px;height:36px}}
+</style>
+<script src="/board3d.js"></script>
+<script>self.ModelViewerElement={meshoptDecoderLocation:"https://cdn.jsdelivr.net/npm/meshoptimizer@0.21.0/meshopt_decoder.js"};</script>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+
+<script>try{const t=localStorage.getItem('hd-theme');if(t==='dark')document.documentElement.dataset.theme='dark'}catch(_){}</script>
+</head>
+<body>
+<div id="pre" aria-hidden="true">
+  <model-viewer src="/logo.glb" auto-rotate rotation-per-second="90deg" auto-rotate-delay="0" interaction-prompt="none" disable-zoom disable-pan shadow-intensity="0" exposure="1.1" loading="eager"><div slot="progress-bar"></div></model-viewer>
+  <div class="pre-bar"><i id="preBar"></i></div>
+  <div class="pre-t">Загрузка…</div>
+</div>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><model-viewer class="logo3d" src="/logo.glb" camera-orbit="-10deg 82deg 48%" field-of-view="20deg" interaction-prompt="none" disable-zoom disable-pan camera-controls="false" shadow-intensity="0" exposure="1.1" aria-label="logo"><div slot="progress-bar"></div></model-viewer><h1>Задачи DevOps</h1></div>
+    <nav>
+      <button class="nav-link" id="v3dBtn" type="button">3D</button>
+      <button class="nav-link" id="archBtn" type="button">Архив</button>
+      <a class="nav-link" href="/">Новая заявка</a>
+      <button class="theme-btn" id="themeBtn" type="button">Тёмная тема</button>
+    </nav>
+  </div>
+  <p class="sub" id="sub">Прочитано роботом → Новые → В работе → Готово.</p>
+  <div id="root3d"></div>
+  <div id="root">
+    <div class="board"><section class="col"><div class="skel"></div><div class="skel"></div></section>
+      <section class="col"><div class="skel"></div></section><section class="col"><div class="skel"></div></section><section class="col"><div class="skel"></div></section></div>
+  </div>
+</div>
+
+<dialog id="dlg">
+  <form method="dialog" id="ef">
+    <h3 id="dlgTitle">Заявка</h3>
+    <label for="e-title">Заголовок</label><input id="e-title" maxlength="200" required>
+    <div class="row">
+      <div><label for="e-kind">Тип</label><select id="e-kind"></select></div>
+      <div><label for="e-contour">Контур</label><select id="e-contour"></select></div>
+      <div><label for="e-urgency">Срочность</label><select id="e-urgency"></select></div>
+    </div>
+    <div class="row">
+      <div><label for="e-to">Кому</label><input id="e-to" maxlength="100"></div>
+      <div><label for="e-due">Нужно к</label><input id="e-due" maxlength="100"></div>
+      <div></div>
+    </div>
+    <label for="e-details">Описание</label><textarea id="e-details"></textarea>
+    <label for="e-links">Ссылки</label><textarea id="e-links" style="min-height:70px"></textarea>
+    <div class="dlg-a">
+      <button class="btn ghost" type="button" id="eArch" style="margin-right:auto">В архив</button>
+      <button class="btn ghost" value="cancel" type="button" id="eCancel">Отмена</button>
+      <button class="btn primary" id="eSave" type="button">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+// прелоадер: прогресс загрузки модели и снятие, когда страница готова (не дольше 8 с)
+document.querySelectorAll('model-viewer').forEach(m => m.addEventListener('error', () => { m.style.display = 'none'; }));
+window.hdReady = (() => {
+  const pre = document.getElementById('pre'), bar = document.getElementById('preBar');
+  const t0 = Date.now(); let done = false;
+  pre.querySelector('model-viewer')?.addEventListener('progress', e => { bar.style.width = Math.round(e.detail.totalProgress * 100) + '%'; });
+  const hide = () => { if (done) return; done = true; setTimeout(() => pre.classList.add('gone'), Math.max(0, 700 - (Date.now() - t0))); };
+  setTimeout(hide, 8000);
+  return hide;
+})();
+
+(() => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  // Секретные доски: /tasks211, /tasks212 — пароль админки, свои данные.
+  const BOARD_ID = (location.pathname.match(/^\/tasks\/?([a-z0-9][a-z0-9-]{0,29})$/) || [])[1] || '';
+  let COLS = [['draft', BOARD_ID ? 'Найдено' : 'Прочитано роботом'], ['new', BOARD_ID ? 'Разобрать' : 'Новые'], ['work', 'В работе'], ['done', 'Готово']];
+  if (BOARD_ID) document.querySelector('a.nav-link[href="/"]').hidden = true;
+
+  // тема: светлая по умолчанию
+  const themeBtn = $('themeBtn');
+  const showTheme = () => { themeBtn.textContent = document.documentElement.dataset.theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'; };
+  showTheme();
+  themeBtn.onclick = () => {
+    const dark = document.documentElement.dataset.theme !== 'dark';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    try { localStorage.setItem('hd-theme', dark ? 'dark' : 'light'); } catch (_) {}
+    showTheme();
+    if (typeof show3d === 'function' && data) show3d();
+  };
+
+  // вход — тот же, что на форме: метка в localStorage или cookie
+  function token() {
+    try { const v = localStorage.getItem('hd-tg'); if (v) return v; } catch (_) {}
+    const m = document.cookie.match(/(?:^|; )hd-tg=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  const H = () => ({ 'X-HD-Token': token() });
+  const toast = t => { const el = $('toast'); el.textContent = t; el.classList.add('on'); setTimeout(() => el.classList.remove('on'), 2200); };
+
+  let data = null, archive = false;
+  $('archBtn').onclick = () => { archive = !archive; load(); };
+  async function load() {
+    try {
+      const qs = new URLSearchParams(); if (BOARD_ID) qs.set('board', BOARD_ID); if (archive) qs.set('archive', '1');
+      const r = await fetch('/api/hd/tasks' + (qs.toString() ? '?' + qs : ''), { headers: H(), credentials: 'same-origin' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        $('root').innerHTML = `<div class="msg"><p>${esc(d.error || 'Нет доступа')}</p>` +
+          (d.auth ? '<a class="btn primary" href="/">Войти через Telegram</a>' : '') + '</div>';
+        $('sub').hidden = true;
+        return;
+      }
+      data = d;
+      if (d.board_title) { document.querySelector('h1').textContent = d.board_title; document.title = d.board_title; }
+      if (d.columns) COLS = ['draft', 'new', 'work', 'done'].map(k => [k, d.columns[k] || k]);
+      $('archBtn').textContent = archive ? '← К доске' : `Архив (${d.archived})`;
+      if (archive) { $('sub').textContent = 'Архив. «Вернуть» возвращает заявку в колонку, где она была.'; renderArchive(); return; }
+      $('sub').textContent = d.secret ? 'Секретная доска: видна только с паролем админки, уведомлений нет.' : d.can_move ? 'Робот выписывает черновики из топика DevOps. Перетащите в «Новые», чтобы принять, или отправьте в архив.'
+        : 'Новые → В работе → Готово. Двигать карточки могут подписчики DevOps.';
+      render();
+    } catch (_) { $('root').innerHTML = '<div class="msg">Не удалось загрузить доску. Обновите страницу.</div>'; }
+  }
+
+  // 3D-вид (порт 3D-доски из Kaneo, board3d.js); выбор запоминается
+  let view3d = false, b3 = null;
+  try { view3d = localStorage.getItem('hd-3d') === '1'; } catch (_) {}
+  function destroy3d() { if (b3) { b3.destroy(); b3 = null; } }
+  function show3d() {
+    const on = view3d && data && !archive;
+    $('v3dBtn').textContent = view3d ? '2D' : '3D';
+    if (!on) { destroy3d(); $('root').hidden = false; return; }
+    const opts = { columns: COLS, tasks: data.tasks, canMove: data.can_move,
+                   theme: document.documentElement.dataset.theme, labels: data.labels };
+    try {
+      if (b3) b3.update(opts);
+      else b3 = Board3D.mount($('root3d'), opts, { onMove: (slug, st) => move(slug, st),
+                                                   onOpen: slug => window.open('/r/' + slug, '_blank') });
+      $('root').hidden = true;
+    } catch (e) { view3d = false; destroy3d(); $('root').hidden = false; $('v3dBtn').textContent = '3D'; toast('3D-вид недоступен в этом браузере'); }
+  }
+  $('v3dBtn').onclick = () => {
+    view3d = !view3d;
+    try { localStorage.setItem('hd-3d', view3d ? '1' : '0'); } catch (_) {}
+    show3d();
+  };
+
+  function render() {
+    const L = data.labels;
+    $('root').innerHTML = '<div class="board">' + COLS.map(([st, title]) => {
+      const items = data.tasks.filter(t => t.status === st);
+      return `<section class="col" data-status="${st}"><h2>${title} <span>${items.length}</span></h2>` +
+        (items.map(t => `<article class="card u-${esc(t.urgency)}${data.can_move ? ' movable' : ''}${t.highlight ? ' hot' : ''}" data-slug="${esc(t.slug)}">
+          <div class="t">${t.highlight ? '<span class="top5">Топ-5</span>' : ''}№${t.id} ${esc(t.title)}${t.opened ? '' : ' <span class="unseen">не открыта</span>'}</div>
+          <div class="m">${esc(t.author || t.contact)} · ${esc(t.created)}</div>
+          <div class="m">${esc(L.contour[t.contour] || '')} · ${esc(L.urgency[t.urgency] || '')}${t.due ? ' · к ' + esc(t.due) : ''}</div>
+          <div class="a"><a href="/r/${esc(t.slug)}" target="_blank">Открыть${t.comments ? " · комментариев: " + t.comments : ""}</a>${data.can_move ? '<button type="button" data-edit>Изменить</button><button type="button" data-arch>В архив</button>' : ''}</div>
+        </article>`).join('') || '<div class="empty">Пусто</div>') + '</section>';
+    }).join('') + '</div>';
+    if (data.can_move) wire();
+    show3d();
+  }
+
+  function renderArchive() {
+    show3d();
+    const L = data.labels;
+    $('root').innerHTML = '<div class="col" style="max-width:720px">' + (data.tasks.map(t => `<article class="card u-${esc(t.urgency)}" data-slug="${esc(t.slug)}">
+        <div class="t">№${t.id} ${esc(t.title)}</div>
+        <div class="m">${esc(t.author || t.contact)} · ${esc(t.created)} · ${esc(L.contour[t.contour] || '')}</div>
+        <div class="a"><a href="/r/${esc(t.slug)}" target="_blank">Открыть</a>${data.can_move ? '<button type="button" data-back>Вернуть</button>' : ''}</div>
+      </article>`).join('') || '<div class="empty">Архив пуст</div>') + '</div>';
+    document.querySelectorAll('[data-back]').forEach(b => b.onclick = async () => {
+      const t = data.tasks.find(x => x.slug === b.closest('.card').dataset.slug);
+      if (await post('move', { slug: t.slug, status: t.prev_status || 'done' })) { toast('Вернул на доску'); load(); }
+    });
+  }
+  async function post(what, body) {
+    try {
+      const r = await fetch('/api/hd/tasks/' + what, { method: 'POST', headers: { ...H(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      return true;
+    } catch (e) { toast('Не сохранилось: ' + e.message); return false; }
+  }
+  async function toArchive(slug) {
+    const t = data.tasks.find(x => x.slug === slug);
+    if (!t || !confirm(`Отправить №${t.id} «${t.title}» в архив?`)) return;
+    if (await post('move', { slug, status: 'archived' })) {
+      data.tasks = data.tasks.filter(x => x.slug !== slug); data.archived++;
+      $('archBtn').textContent = `Архив (${data.archived})`; $('dlg').open && $('dlg').close(); render(); toast('В архиве');
+    }
+  }
+
+  async function move(slug, status) {
+    const t = data.tasks.find(x => x.slug === slug);
+    if (!t || t.status === status) return;
+    const was = t.status; t.status = status; render();
+    try {
+      const r = await fetch('/api/hd/tasks/move', { method: 'POST', headers: { ...H(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug, status }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      toast('Перенесено, автор получит уведомление');
+    } catch (e) { t.status = was; render(); toast('Не сохранилось: ' + e.message); }
+  }
+
+  // перетаскивание: Pointer Events — работает и мышью, и пальцем (на тач — после короткого удержания)
+  let dragging = false;
+  // пока карточку тащат пальцем, страница не прокручивается
+  document.addEventListener('touchmove', e => { if (dragging) e.preventDefault(); }, { passive: false });
+  function wire() {
+    document.querySelectorAll('.card.movable').forEach(card => {
+      card.querySelector('[data-edit]').onclick = e => { e.stopPropagation(); edit(card.dataset.slug); };
+      card.querySelector('[data-arch]').onclick = e => { e.stopPropagation(); toArchive(card.dataset.slug); };
+      card.addEventListener('pointerdown', e => {
+        if (e.target.closest('a,button') || e.button > 0) return;
+        const touch = e.pointerType !== 'mouse';
+        const sx = e.clientX, sy = e.clientY;
+        let ghost = null, started = false, timer = null, over = null;
+        const rect = card.getBoundingClientRect();
+        const begin = () => {
+          started = true; dragging = true;
+          ghost = card.cloneNode(true); ghost.classList.add('drag');
+          ghost.style.width = rect.width + 'px';
+          document.body.appendChild(ghost); card.classList.add('ghost');
+          if (navigator.vibrate) navigator.vibrate(15);
+        };
+        const place = (x, y) => {
+          ghost.style.left = (x - (sx - rect.left)) + 'px'; ghost.style.top = (y - (sy - rect.top)) + 'px';
+          const col = document.elementFromPoint(x, y)?.closest('.col');
+          if (over !== col) { over?.classList.remove('over'); over = col; over?.classList.add('over'); }
+        };
+        if (touch) timer = setTimeout(() => { begin(); place(sx, sy); }, 220);
+        const onMove = ev => {
+          if (!started) {
+            if (touch) { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > 8) cleanup(); return; }
+            if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
+            begin();
+          }
+          ev.preventDefault(); place(ev.clientX, ev.clientY);
+        };
+        const onUp = () => {
+          const target = started && over ? over.dataset.status : null;
+          cleanup();
+          if (target) move(card.dataset.slug, target);
+        };
+        const cleanup = () => {
+          clearTimeout(timer); dragging = false;
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', cleanup);
+          ghost?.remove(); card.classList.remove('ghost'); over?.classList.remove('over');
+          document.body.style.overflow = '';
+        };
+        window.addEventListener('pointermove', onMove, { passive: false });
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', cleanup);
+      });
+    });
+  }
+
+  // правка карточки
+  const F = ['title', 'kind', 'contour', 'urgency', 'to', 'due', 'details', 'links'];
+  let editing = null;
+  function edit(slug) {
+    const t = data.tasks.find(x => x.slug === slug);
+    if (!t) return;
+    editing = slug;
+    fetch('/api/hd/seen', { method: 'POST', headers: { ...H(), 'Content-Type': 'application/json' }, body: JSON.stringify({ slug }) });
+    for (const k of ['kind', 'contour', 'urgency'])
+      $('e-' + k).innerHTML = Object.entries(data.labels[k]).map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('');
+    F.forEach(k => { $('e-' + k).value = t[k] || ''; });
+    $('dlgTitle').textContent = `Заявка №${t.id}`;
+    $('dlg').showModal();
+  }
+  $('eCancel').onclick = () => $('dlg').close();
+  $('eArch').onclick = () => toArchive(editing);
+  $('eSave').onclick = async () => {
+    const fields = Object.fromEntries(F.map(k => [k, $('e-' + k).value]));
+    if (!fields.title.trim() || !fields.details.trim()) { toast('Заголовок и описание обязательны'); return; }
+    try {
+      const r = await fetch('/api/hd/tasks/edit', { method: 'POST', headers: { ...H(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: editing, fields }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      Object.assign(data.tasks.find(x => x.slug === editing), fields);
+      $('dlg').close(); render(); toast('Сохранено');
+    } catch (e) { toast('Не сохранилось: ' + e.message); }
+  };
+
+  load().finally(() => window.hdReady());
+})();
+</script>
+</body>
+</html>

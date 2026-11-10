@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#343A7E">
+<title>Заявка DevOps — демо hd</title>
+<!--
+  hd — заявка DevOps. Бэкенд: hd.py рядом.
+    GET  /api/hd/chat      -> {"left": N, "per_day": 10}
+    POST /api/hd/chat      JSON {messages:[{role,text}], fields:{…}} -> {reply, fields, left}
+    POST /api/hd/parse     multipart files[] (до 3 .md, до 100 КБ) -> {fields, warnings}
+    POST /api/hd/requests  multipart поля + files[] -> {id, url}; уходит подписчикам Telegram-бота
+  Если /api/hd/parse недоступен, поля заполняются простым разбором .md прямо в браузере.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F5F5F5; --card:#FFFFFF; --ink:#050819; --muted:#85868A; --line:#E0E0E8;
+  --brand:#343A7E; --brand-soft:#E7E7F0; --accent:#FF5722; --ok:#1E8E5A; --warn:#B26A00; --err:#C62828;
+  --agent:#FFF4EE; --agent-line:#FFC7B0; --input:#FFFFFF; --warn-bg:#FFF8E1; --on-brand:#FFFFFF;
+  --head:#343A7E; color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0E1020; --card:#171A2E; --ink:#E8E9F3; --muted:#9A9CB3; --line:#2B2F4A;
+  --brand:#9EA6FF; --brand-soft:#252A48; --accent:#FF6E40; --ok:#4CC38A; --warn:#F2B04C; --err:#FF6B6B;
+  --agent:#2A1E1A; --agent-line:#6B3A2A; --input:#11142A; --warn-bg:#2B2414; --on-brand:#0E1020;
+  --head:#C9CDFF; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0E1020; --card:#171A2E; --ink:#E8E9F3; --muted:#9A9CB3; --line:#2B2F4A;
+  --brand:#9EA6FF; --brand-soft:#252A48; --accent:#FF6E40; --ok:#4CC38A; --warn:#F2B04C; --err:#FF6B6B;
+  --agent:#2A1E1A; --agent-line:#6B3A2A; --input:#11142A; --warn-bg:#2B2414; --on-brand:#0E1020;
+  --head:#C9CDFF; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.45 'Fira Sans',Arial,sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:20px 16px calc(48px + env(safe-area-inset-bottom))}
+header{margin-bottom:16px}
+h1{font:600 24px/1.2 'Fira Sans',Arial,sans-serif;color:var(--head);margin:0 0 4px}
+body{transition:background .25s,color .25s}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:4px}
+.top nav{display:flex;gap:8px;align-items:center}
+.nav-link,.theme-btn{font:500 14px 'Fira Sans',Arial,sans-serif;color:var(--brand);text-decoration:none;background:var(--card);
+  border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;min-height:38px;display:inline-flex;align-items:center}
+.nav-link:hover,.theme-btn:hover{border-color:var(--brand)}
+/* загрузка: полоса сверху и «печатает» в чате */
+#bar{position:fixed;top:0;left:0;right:0;height:3px;z-index:50;overflow:hidden;opacity:0;transition:opacity .2s}
+#bar.on{opacity:1}
+#bar::before{content:"";position:absolute;inset:0;width:40%;background:linear-gradient(90deg,transparent,var(--accent),var(--brand),transparent);
+  animation:bar 1.1s ease-in-out infinite}
+@keyframes bar{from{transform:translateX(-100%)}to{transform:translateX(260%)}}
+.typing{display:flex;align-items:center;gap:10px}
+.dots{display:inline-flex;gap:4px}
+.dots i{width:7px;height:7px;border-radius:50%;background:var(--brand);opacity:.35;animation:dot 1.2s ease-in-out infinite}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes dot{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-5px);opacity:1}}
+.typing span{color:var(--muted);font-size:13px;transition:opacity .3s}
+.shimmer{background:linear-gradient(100deg,var(--brand-soft) 30%,var(--card) 50%,var(--brand-soft) 70%);background-size:200% 100%;
+  animation:shim 1.3s linear infinite;border-radius:8px}
+@keyframes shim{to{background-position:-200% 0}}
+.locked .chat-log,.locked .grid{filter:saturate(.6)}
+@media (prefers-reduced-motion:reduce){*{animation-duration:0s!important;animation-iteration-count:1!important}}
+.sub{color:var(--muted);margin:0}
+.layout{display:grid;grid-template-columns:1fr;gap:16px;align-items:start}
+.layout>*{min-width:0}
+.layout .card{margin-bottom:0}
+@media (min-width:1000px){
+  .layout{grid-template-columns:420px 1fr;grid-template-areas:"login login" "chat form" "tg form";grid-template-rows:auto auto 1fr}
+  #loginCard{grid-area:login}
+  #chatCard{grid-area:chat} #f{grid-area:form} #tgCard{grid-area:tg;align-self:start}
+  .chat-log{max-height:calc(100vh - 300px)}
+}
+#f .card{margin-bottom:16px}
+.card{background:var(--card);border-radius:8px;padding:20px;margin-bottom:16px}
+.card h2{font:600 16px/1.2 'Fira Sans',Arial,sans-serif;color:var(--brand);margin:0 0 12px;display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.card h2 small{font:400 12px 'Fira Sans',Arial,sans-serif;color:var(--muted)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.full{grid-column:1/-1}
+.hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
+.locked{opacity:.45;pointer-events:none;user-select:none}
+.login{border:2px solid var(--accent)}
+
+input[readonly]{background:var(--brand-soft);color:var(--brand)}
+.who{font-size:13px;color:var(--muted);margin-top:6px}.who a{color:var(--brand)}
+label{display:block;font-weight:500;font-size:14px;margin-bottom:4px}
+label .req{color:var(--accent)}
+input,select,textarea{width:100%;font:inherit;font-size:16px;color:inherit;background:var(--input);border:1px solid var(--line);
+  border-radius:8px;padding:10px 12px;transition:background .3s,border-color .2s;-webkit-appearance:none;appearance:none}
+select{background:var(--input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238A90E0' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 12px center;padding-right:34px}
+textarea{min-height:96px;resize:vertical}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand)}
+.by-agent{background-color:var(--agent);border-color:var(--agent-line)}
+.hint{color:var(--muted);font-size:12px;margin:6px 0 0}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:20px;text-align:center;cursor:pointer;color:var(--muted)}
+.drop.over{border-color:var(--brand);background:var(--brand-soft)}
+.drop b{color:var(--brand)}
+.files{list-style:none;padding:0;margin:12px 0 0}
+.files li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 6px 6px 12px;
+  background:var(--brand-soft);border-radius:100px;margin-bottom:6px;font-size:14px;word-break:break-all}
+.files button{border:0;background:none;color:var(--brand);cursor:pointer;font-size:20px;min-width:36px;min-height:36px}
+.status{font-size:14px}
+.status:not(:empty){margin-top:10px}
+.status.err{color:var(--err)} .status.ok{color:var(--ok)} .status.warn{color:var(--warn)}
+.warns{margin:10px 0 0;padding:10px 14px;border-radius:8px;background:var(--warn-bg);color:var(--warn);font-size:14px;display:none}
+.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{border:0;border-radius:8px;padding:12px 20px;min-height:44px;font:500 15px 'Fira Sans',Arial,sans-serif;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.ghost{background:none;border:1px solid var(--brand);color:var(--brand)}
+.btn:disabled{opacity:.5;cursor:default}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--brand-soft);border-top-color:var(--brand);
+  border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes s{to{transform:rotate(360deg)}}
+/* чат */
+.chat-log{display:flex;flex-direction:column;gap:8px;max-height:55vh;min-height:120px;overflow-y:auto;padding:2px;margin-bottom:12px;overscroll-behavior:contain}
+.msg{max-width:88%;padding:9px 12px;border-radius:12px;white-space:pre-wrap;word-wrap:break-word;font-size:15px}
+.msg.user{align-self:flex-end;background:var(--brand);color:var(--on-brand);border-bottom-right-radius:4px}
+.msg.bot{align-self:flex-start;background:var(--brand-soft);border-bottom-left-radius:4px}
+.msg.note{align-self:center;background:none;color:var(--muted);font-size:13px;text-align:center;padding:2px}
+.offer{align-self:stretch;background:var(--agent);border:1px solid var(--agent-line);border-radius:12px;padding:10px 12px;font-size:14px}
+.offer dl{margin:0 0 10px;display:grid;grid-template-columns:auto 1fr;gap:4px 10px}
+.offer dt{color:var(--muted)} .offer dd{margin:0;white-space:pre-wrap;word-wrap:break-word}
+.offer .row{display:flex;gap:8px;flex-wrap:wrap} .offer .btn{min-height:38px;padding:8px 14px;font-size:14px}
+.offer.done{opacity:.6} .offer.done .row{display:none}
+.chat-in textarea{min-height:120px;max-height:320px;resize:vertical;padding:12px}
+.chat-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.chat-btns .btn{padding:10px 14px;font-size:14px}
+.chat-btns #sayBtn{margin-left:auto}
+#mic.rec{background:var(--err);border-color:var(--err);color:#fff;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.6}}
+@media (max-width:640px){.chat-btns .btn{flex:1 1 auto}.chat-btns #sayBtn{flex-basis:100%;margin-left:0}}
+@media (max-width:640px){
+  .wrap{padding:14px 12px calc(40px + env(safe-area-inset-bottom))}
+  h1{font-size:21px}
+  .card{padding:16px 14px;margin-bottom:12px}
+  .grid{grid-template-columns:1fr;gap:12px}
+  .actions .btn{flex:1 1 100%}
+  .actions .status{flex-basis:100%}
+  .msg{max-width:94%}
+  .drop{padding:16px}
+}
+
+/* 3D-логотип и прелоадер */
+#pre{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .45s ease,visibility .45s}
+#pre.gone{opacity:0;visibility:hidden}
+#pre model-viewer{width:300px;height:170px;--poster-color:transparent;background:transparent}
+#pre .pre-t{font:500 14px 'Fira Sans',Arial,sans-serif;color:var(--muted);letter-spacing:.02em}
+#pre .pre-bar{width:160px;height:3px;border-radius:3px;background:var(--brand-soft);overflow:hidden}
+#pre .pre-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--brand));transition:width .2s}
+.logo3d{width:120px;height:44px;flex:none;--poster-color:transparent;background:transparent}
+.brand{display:flex;align-items:center;gap:10px}
+@media (max-width:640px){.logo3d{width:96px;height:36px}}
+</style>
+<link rel="stylesheet" href="demo.css">
+<script src="demo-form.js"></script>
+</head>
+<body>
+<div class="demo-bar" role="note"><span><b>Это демо:</b> данные вымышлены, изменения не сохраняются.</span><button type="button" onclick="hdDemoSample()">Вставить пример</button><a href="../">О проекте</a></div>
+<div id="pre" aria-hidden="true">
+  <div class="pre-bar"><i id="preBar"></i></div>
+  <div class="pre-t">Загрузка…</div>
+</div>
+<div class="wrap">
+  <div id="bar" aria-hidden="true"></div>
+  <header>
+    <div class="top">
+      <div class="brand"><svg class="demo-logo" viewBox="0 0 40 40" aria-hidden="true"><rect x="2" y="2" width="36" height="36" rx="9" fill="currentColor"/><path d="M11 11v18M11 22a4 4 0 0 1 8 0v7M30 11v18M30 24.5a4.5 4.5 0 1 1-9 0a4.5 4.5 0 1 1 9 0" fill="none" style="stroke:var(--on-brand)" stroke-width="2.6" stroke-linecap="round"/></svg><h1>Заявка DevOps</h1></div>
+      <nav>
+        <a class="nav-link" href="tasks.html">Задачи</a>
+        <button class="theme-btn" id="themeBtn" type="button" aria-label="Сменить тему">Тёмная тема</button>
+      </nav>
+    </div>
+    <p class="sub">Напишите или надиктуйте, что случилось, или прикрепите .md. Поля заявки заполнятся по вашему «ок»; проверьте их и отправьте, заявка уйдёт подписчикам в Telegram.</p>
+  </header>
+
+  <div class="layout">
+      <section class="card login" id="loginCard" hidden>
+        <h2>Войдите через Telegram</h2>
+        <p id="loginText" style="margin:0 0 12px;font-size:15px">Писать и отправлять заявки можно после входа через Telegram-бота. Нажмите кнопку, в Telegram нажмите «Старт» и вернитесь сюда: страница обновится сама. Ник и имя подставятся из Telegram.</p>
+        <a class="btn primary" id="loginBtn" href="https://t.me/demo_bot?start=hd" target="_blank" rel="noopener">Войти через Telegram</a>
+      </section>
+
+      <section class="card" id="chatCard" aria-label="Что случилось">
+        <h2>Что случилось? <small id="left"></small></h2>
+        <div class="chat-log" id="log" aria-live="polite">
+          <div class="msg bot">Напишите или надиктуйте, что случилось или что нужно от DevOps: что развернуть или настроить, где и к какому сроку. Можно прикрепить .md. Я задам уточняющие вопросы и предложу, как заполнить заявку. Поля заполню только после вашего «ок».</div>
+        </div>
+        <div class="chat-in">
+          <textarea id="say" rows="4" maxlength="2000" placeholder="Что случилось или что нужно сделать…" aria-label="Сообщение"></textarea>
+          <div class="chat-btns">
+            <button class="btn ghost" id="clip" type="button">Прикрепить .md</button>
+            <button class="btn ghost" id="mic" type="button" hidden>Надиктовать</button>
+            <button class="btn primary" id="sayBtn" type="button">Отправить</button>
+          </div>
+        </div>
+        <p class="hint" id="micHint">Ctrl+Enter — отправить. Не больше 10 сообщений в сутки. Секреты не пишите и не диктуйте.</p>
+      </section>
+
+
+    <form id="f" novalidate>
+      <section class="card">
+        <h2>Файлы</h2>
+        <div class="drop" id="drop" tabindex="0" role="button">
+          Перетащите сюда или <b>выберите файлы</b><br>
+          <span class="hint">Только .md, не больше 3 файлов, до 100 КБ каждый</span>
+        </div>
+        <input type="file" id="pick" accept=".md,text/markdown,text/plain" multiple hidden>
+        <ul class="files" id="list"></ul>
+        <div class="status" id="pstatus"></div>
+        <div class="warns" id="warns"></div>
+      </section>
+
+      <section class="card">
+        <h2>Заявка</h2>
+        <div class="grid">
+          <div class="full"><label for="title">Заголовок <span class="req">*</span></label>
+            <input id="title" name="title" required maxlength="200" placeholder="Например: развернуть сервис поиска на stage"></div>
+          <div><label for="author">Автор</label>
+            <input id="author" name="author" maxlength="100" readonly placeholder="из Telegram"></div>
+          <div><label for="contact">Контакт <span class="req">*</span></label>
+            <input id="contact" name="contact" required maxlength="100" readonly placeholder="из Telegram">
+            <div class="who" id="who"></div></div>
+          <div><label for="to">Кому</label>
+            <input id="to" name="to" maxlength="100" placeholder="DevOps"></div>
+          <div><label for="kind">Тип</label>
+            <select id="kind" name="kind">
+              <option value="service">Новый сервис</option>
+              <option value="stand">Стенд</option>
+              <option value="access">Доступ</option>
+              <option value="incident">Инцидент</option>
+              <option value="other">Другое</option>
+            </select></div>
+          <div><label for="contour">Контур</label>
+            <select id="contour" name="contour"><option value="dev">Dev</option><option value="stage">Stage</option><option value="prod">Прод</option><option value="vds">VDS</option><option value="unknown">Согласовать</option></select></div>
+          <div><label for="urgency">Срочность</label>
+            <select id="urgency" name="urgency">
+              <option value="normal">Обычная</option>
+              <option value="high">Высокая</option>
+              <option value="fire">Горит</option>
+            </select></div>
+          <div class="full"><label for="due">Нужно к</label>
+            <input id="due" name="due" maxlength="100" placeholder="Дата или «согласовать»"></div>
+          <div class="full"><label for="details">Описание <span class="req">*</span></label>
+            <textarea id="details" name="details" required style="min-height:180px" placeholder="Что случилось или зачем; что сделать DevOps, по пункту на строку; открытые вопросы"></textarea></div>
+          <div class="full"><label for="links">Ссылки на MR и репозитории</label>
+            <textarea id="links" name="links" style="min-height:60px"></textarea></div>
+          <div class="hp" aria-hidden="true"><label for="website">Сайт</label>
+            <input id="website" name="website" tabindex="-1" autocomplete="off"></div>
+        </div>
+        <p class="hint">Секреты в заявку не пишите: ключи и пароли передаются отдельно. Не больше 3 заявок в сутки.</p>
+      </section>
+
+      <div class="actions">
+        <button class="btn primary" id="send" type="submit">Отправить заявку</button>
+        <button class="btn ghost" id="reset" type="button">Очистить</button>
+        <span class="status" id="sstatus"></span>
+      </div>
+    </form>
+
+      <section class="card" id="tgCard">
+        <h2>Получать заявки в Telegram</h2>
+        <p id="tgText" style="margin:0 0 10px;font-size:15px">Новые заявки рассылает Telegram-бот. Откройте его и нажмите «Старт». Подписка нужна тем, кто разбирает заявки, а для отправки достаточно входа. Отписаться: «devops стоп».</p>
+        <a class="btn ghost" id="tgBtn" href="https://t.me/demo_bot?start=devops" target="_blank" rel="noopener">Подписаться в Telegram</a>
+      </section>
+  </div>
+</div>
+
+<script>
+// прелоадер: прогресс загрузки модели и снятие, когда страница готова (не дольше 8 с)
+document.querySelectorAll('model-viewer').forEach(m => m.addEventListener('error', () => { m.style.display = 'none'; }));
+window.hdReady = (() => {
+  const pre = document.getElementById('pre'), bar = document.getElementById('preBar');
+  const t0 = Date.now(); let done = false;
+  pre.querySelector('model-viewer')?.addEventListener('progress', e => { bar.style.width = Math.round(e.detail.totalProgress * 100) + '%'; });
+  const hide = () => { if (done) return; done = true; setTimeout(() => pre.classList.add('gone'), Math.max(0, 700 - (Date.now() - t0))); };
+  setTimeout(hide, 8000);
+  return hide;
+})();
+
+// Тема ставится до отрисовки, чтобы не мигало.
+(() => { let t = 'light'; try { if (localStorage.getItem('hd-theme') === 'dark') t = 'dark'; } catch (_) {} document.documentElement.dataset.theme = t; })();
+(() => {
+  const MAX_FILES = 3, MAX_SIZE = 100 * 1024;
+  const FIELDS = ['title','author','contact','to','kind','contour','urgency','due','details','links'];
+  const OPENED = Date.now();
+  const $ = id => document.getElementById(id);
+
+  // --- тема: авто → светлая → тёмная ------------------------------------------
+  // тема: светлая по умолчанию, кнопка переключает на тёмную и обратно
+  const themeBtn = $('themeBtn');
+  const showTheme = () => { themeBtn.textContent = document.documentElement.dataset.theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'; };
+  showTheme();
+  themeBtn.addEventListener('click', () => {
+    const dark = document.documentElement.dataset.theme !== 'dark';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    try { localStorage.setItem('hd-theme', dark ? 'dark' : 'light'); } catch (_) {}
+    showTheme();
+  });
+
+  // --- загрузка: полоса сверху на время любого запроса к API -------------------
+  let busy = 0;
+  const bar = document.getElementById('bar');
+  const origFetch = window.fetch.bind(window);
+  window.fetch = async (...a) => {
+    const quiet = String(a[0]).includes('/api/hd/me');
+    if (!quiet) { busy++; bar.classList.add('on'); }
+    try { return await origFetch(...a); }
+    finally { if (!quiet && --busy <= 0) { busy = 0; bar.classList.remove('on'); } }
+  };
+  function typing(el, hints) {
+    el.innerHTML = '<div class="typing"><span class="dots"><i></i><i></i><i></i></span><span></span></div>';
+    const label = el.querySelector('.typing span:last-child');
+    let i = 0; label.textContent = hints[0];
+    const t = setInterval(() => {
+      i = (i + 1) % hints.length; label.style.opacity = 0;
+      setTimeout(() => { label.textContent = hints[i]; label.style.opacity = 1; }, 250);
+    }, 2800);
+    return () => clearInterval(t);
+  }
+  const CHAT_HINTS = ['Читаю сообщение…', 'Сверяюсь со справкой по инфраструктуре…', 'Смотрю граф кода…', 'Формулирую поля заявки…'];
+  const drop = $('drop'), pick = $('pick'), list = $('list'), pstatus = $('pstatus'), warns = $('warns');
+  let files = [];
+
+  const setStatus = (el, text, cls = '') => { el.className = 'status ' + cls; el.innerHTML = text; };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const store = {
+    get(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch (_) { return null; } },
+    set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (_) {} },
+  };
+  const formFields = () => Object.fromEntries(FIELDS.map(k => [k, $(k).value]));
+
+  // --- поля ------------------------------------------------------------------
+  function fill(fields) {
+    for (const k of FIELDS) {
+      const v = fields && fields[k];
+      if (v == null || v === '') continue;
+      const el = $(k);
+      if (el.tagName === 'SELECT' && ![...el.options].some(o => o.value === v)) continue;
+      el.value = v;
+      el.classList.add('by-agent');
+    }
+    store.set('hd-fields', formFields());
+  }
+  FIELDS.forEach(k => $(k).addEventListener('input', () => {
+    $(k).classList.remove('by-agent'); store.set('hd-fields', formFields());
+  }));
+  const saved = store.get('hd-fields');
+  if (saved) for (const k of FIELDS) if (saved[k]) $(k).value = saved[k];
+
+  // Имя и контакт помним в этом браузере насовсем: их не надо вводить в каждой заявке.
+  const ME = ['author', 'contact'];
+  const me = {
+    get() { try { return JSON.parse(localStorage.getItem('hd-me')) || {}; } catch (_) { return {}; } },
+    set(v) { try { localStorage.setItem('hd-me', JSON.stringify(v)); } catch (_) {} },
+  };
+  const restoreMe = () => { const m = me.get(); ME.forEach(k => { if (m[k] && !$(k).value) $(k).value = m[k]; }); };
+  restoreMe();
+
+  // Вход через Telegram. Метка этого браузера уходит боту в /start hd_<метка>;
+  // ссылка из бота (?tg=<код>) тоже становится меткой — так входят с другого устройства.
+  // Встроенный браузер Telegram часто не даёт localStorage — тогда храним в cookie.
+  const keep = {
+    get(k) {
+      try { const v = localStorage.getItem(k); if (v) return v; } catch (_) {}
+      const m = document.cookie.match(new RegExp('(?:^|; )' + k + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    },
+    set(k, v) {
+      try { localStorage.setItem(k, v); } catch (_) {}
+      document.cookie = `${k}=${encodeURIComponent(v)}; max-age=31536000; path=/; SameSite=Lax; Secure`;
+    },
+    del(k) {
+      try { localStorage.removeItem(k); } catch (_) {}
+      document.cookie = `${k}=; max-age=0; path=/`;
+    },
+  };
+  let tgToken = null;
+  const fromBot = new URLSearchParams(location.search).get('tg');
+  if (fromBot && /^[A-Za-z0-9_-]{8,56}$/.test(fromBot)) {
+    tgToken = fromBot;
+    keep.set('hd-tg', fromBot);
+    try { history.replaceState(null, '', location.pathname); } catch (_) {}
+  }
+  tgToken = tgToken || keep.get('hd-tg');
+  if (!tgToken) {
+    const a = new Uint8Array(12); crypto.getRandomValues(a);
+    tgToken = Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+    keep.set('hd-tg', tgToken);
+  }
+  const auth = () => (tgToken ? { 'X-HD-Token': tgToken } : {});
+  const tgBtn = $('tgBtn'), loginBtn = $('loginBtn');
+  if (tgToken) {
+    tgBtn.href = tgBtn.href.replace('start=devops', 'start=devops_' + tgToken);
+    loginBtn.href = loginBtn.href.replace('start=hd', 'start=hd_' + tgToken);
+  }
+  let authed = false;
+  function lock(on, text) {
+    $('loginCard').hidden = !on;
+    if (text) $('loginText').textContent = text;
+    $('chatCard').classList.toggle('locked', on);
+    $('f').classList.toggle('locked', on);
+  }
+  async function tgCheck() {
+    try {
+      const d = await (await fetch('/api/hd/me?t=' + encodeURIComponent(tgToken || ''))).json();
+      if (!d.authorized) { lock(true); return false; }
+      if (d.status === 'banned') { lock(true, 'Доступ закрыт администратором.'); $('loginBtn').hidden = true; return true; }
+      if (d.status === 'pending') { lock(true, 'Вход выполнен, но DevOps ещё не подтвердил доступ. Страница обновится сама после подтверждения.'); $('loginBtn').hidden = true; return false; }
+      if (!d.telegram) { lock(true, 'В Telegram нет ника. Поделитесь контактом с ботом: он попросит после «Старт».'); return false; }
+      authed = true; lock(false);
+      $('contact').value = d.telegram; $('author').value = d.name || '';
+      me.set({ author: d.name || '', contact: d.telegram });
+      $('who').innerHTML = 'Вы вошли через Telegram · <a href="#" id="logout">выйти</a>';
+      $('logout').onclick = e => { e.preventDefault(); keep.del('hd-tg'); try { localStorage.removeItem('hd-me'); } catch (_) {} location.reload(); };
+      showLeft(d.chat_left);
+      if (d.subscribed) {
+        $('tgText').textContent = 'Вы подписаны: новые заявки приходят в Telegram. Отписаться: «devops стоп» боту.';
+        tgBtn.textContent = 'Открыть бота';
+      }
+      return true;
+    } catch (_) { return false; }
+  }
+  function poll() {
+    let n = 0;
+    const t = setInterval(async () => { if (await tgCheck() || ++n > 60) clearInterval(t); }, 3000);
+  }
+  [tgBtn, loginBtn].forEach(b => b.addEventListener('click', poll));
+  const onAuthLost = () => { authed = false; lock(true); };
+  ME.forEach(k => $(k).addEventListener('change', () => {
+    const m = me.get(); m[k] = $(k).value.trim(); me.set(m);
+  }));
+
+  // --- чат -------------------------------------------------------------------
+  const log = $('log'), say = $('say'), sayBtn = $('sayBtn'), left = $('left');
+  let history = store.get('hd-chat') || [];
+  const coarse = window.matchMedia('(pointer:coarse)').matches;
+
+  function bubble(role, text) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + role;
+    d.textContent = text;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+    return d;
+  }
+  history.forEach(m => bubble(m.role === 'user' ? 'user' : 'bot', m.text));
+  function showLeft(n) { if (n == null) return; left.textContent = `осталось ${n} из 10`; sayBtn.disabled = n === 0; }
+  tgCheck().then(ok => { window.hdReady(); if (!ok) poll(); });
+
+  function grow() { say.style.height = 'auto'; say.style.height = Math.max(120, Math.min(say.scrollHeight + 2, 320)) + 'px'; }
+  say.addEventListener('input', grow);
+  say.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); talk(); }
+  });
+  sayBtn.addEventListener('click', talk);
+  $('clip').addEventListener('click', () => pick.click());
+
+  // Диктовка: распознавание речи браузера (Chrome, Edge, Safari). Где его нет — кнопки нет.
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const mic = $('mic');
+  if (SR) {
+    mic.hidden = false;
+    let rec = null, base = '';
+    mic.addEventListener('click', () => {
+      if (rec) { rec.stop(); return; }
+      rec = new SR();
+      rec.lang = 'ru-RU'; rec.interimResults = true; rec.continuous = true;
+      base = say.value ? say.value.replace(/\s*$/, ' ') : '';
+      rec.onresult = e => {
+        let fin = '', tmp = '';
+        for (let i = 0; i < e.results.length; i++)
+          (e.results[i].isFinal ? (fin += e.results[i][0].transcript) : (tmp += e.results[i][0].transcript));
+        say.value = (base + fin + tmp).slice(0, 2000); grow();
+      };
+      rec.onerror = e => {
+        if (e.error === 'not-allowed' || e.error === 'service-not-allowed')
+          bubble('note', 'Нет доступа к микрофону: разрешите его в настройках браузера.');
+      };
+      rec.onend = () => { rec = null; mic.classList.remove('rec'); mic.textContent = 'Надиктовать'; };
+      try { rec.start(); mic.classList.add('rec'); mic.textContent = 'Остановить'; }
+      catch (_) { rec = null; }
+    });
+  }
+
+  const LABELS = {title:'Заголовок',author:'Автор',contact:'Контакт',to:'Кому',kind:'Тип',contour:'Контур',
+    urgency:'Срочность',due:'Нужно к',details:'Описание',links:'Ссылки'};
+  let pending = null;   // {fields, el} — предложение агента, ждёт «ок»
+  const optText = (k, v) => { const o = $(k).tagName === 'SELECT' && [...$(k).options].find(x => x.value === v); return o ? o.text : v; };
+
+  function offer(fields) {
+    fields = { ...fields };
+    ME.forEach(k => { if ($(k).value.trim()) delete fields[k]; });
+    if (!Object.keys(fields).length) return;
+    if (pending) pending.el.remove();
+    const el = document.createElement('div');
+    el.className = 'offer';
+    el.innerHTML = '<b>Предлагаю заполнить:</b><dl>' + Object.entries(fields).map(([k, v]) =>
+      `<dt>${esc(LABELS[k] || k)}</dt><dd>${esc(String(optText(k, v)).slice(0, 300))}${String(v).length > 300 ? '…' : ''}</dd>`).join('') +
+      '</dl><div class="row"><button type="button" class="btn primary" data-a="ok">Ок, заполнить</button>' +
+      '<button type="button" class="btn ghost" data-a="no">Не надо</button></div>';
+    el.addEventListener('click', e => { const a = e.target.dataset.a; if (a) decide(a === 'ok'); });
+    log.appendChild(el); log.scrollTop = log.scrollHeight;
+    pending = { fields, el };
+  }
+  function decide(ok) {
+    if (!pending) return;
+    if (ok) fill(pending.fields);
+    pending.el.classList.add('done');
+    bubble('note', ok ? 'Поля заполнены и подсвечены. Проверьте форму и отправьте.' : 'Поля не трогаю.');
+    pending = null;
+  }
+
+  async function talk() {
+    const text = say.value.trim();
+    if (!text || sayBtn.disabled) return;
+    say.value = ''; grow();
+    if (pending && /^(ок|ok|окей|да|давай|заполни|заполняй|подходит|согласен)[.! ]*$/i.test(text)) {
+      bubble('user', text); decide(true); return;
+    }
+    if (pending && /^(нет|не надо|не нужно)[.! ]*$/i.test(text)) {
+      bubble('user', text); decide(false); return;
+    }
+    history.push({ role: 'user', text });
+    bubble('user', text);
+    const wait = bubble('bot', '');
+    const stopTyping = typing(wait, CHAT_HINTS);
+    sayBtn.disabled = true;
+    let n;
+    try {
+      const r = await fetch('/api/hd/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth() },
+        body: JSON.stringify({ messages: history.slice(-20), fields: formFields() }) });
+      const d = await r.json().catch(() => ({}));
+      n = d.left;
+      if (r.status === 401) onAuthLost();
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      stopTyping();
+      wait.textContent = d.reply || 'Готово.';
+      history.push({ role: 'bot', text: wait.textContent });
+      if (d.fields && Object.keys(d.fields).length) offer(d.fields);
+    } catch (err) {
+      stopTyping();
+      wait.className = 'msg note';
+      wait.textContent = 'Не получилось: ' + err.message;
+      history.pop();
+    } finally {
+      store.set('hd-chat', history.slice(-40));
+      showLeft(n);
+      if (n !== 0) sayBtn.disabled = false;
+      if (!coarse) say.focus();
+    }
+  }
+
+  // --- файлы -----------------------------------------------------------------
+  function addFiles(incoming) {
+    const errs = [];
+    for (const f of incoming) {
+      if (!/\.md$/i.test(f.name)) { errs.push(`${f.name}: нужен .md`); continue; }
+      if (f.size > MAX_SIZE) { errs.push(`${f.name}: больше 100 КБ`); continue; }
+      if (files.some(x => x.name === f.name && x.size === f.size)) continue;
+      if (files.length >= MAX_FILES) { errs.push(`не больше ${MAX_FILES} файлов`); break; }
+      files.push(f);
+    }
+    render();
+    if (errs.length) setStatus(pstatus, esc(errs.join('; ')) + '. Без файла можно: опишите задачу в чате с Claude.', 'err');
+    if (files.length && !errs.length) parse();
+  }
+  function render() {
+    list.innerHTML = files.map((f, i) =>
+      `<li><span>${esc(f.name)} · ${(f.size / 1024).toFixed(1)} КБ</span><button type="button" data-i="${i}" aria-label="Убрать">×</button></li>`).join('');
+  }
+  list.addEventListener('click', e => {
+    const i = e.target.dataset.i;
+    if (i !== undefined) { files.splice(+i, 1); render(); setStatus(pstatus, ''); }
+  });
+  drop.addEventListener('click', () => pick.click());
+  drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick.click(); } });
+  pick.addEventListener('change', () => { addFiles([...pick.files]); pick.value = ''; });
+  ['dragenter','dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave','drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', e => addFiles([...e.dataTransfer.files]));
+
+  function showWarns(items) {
+    warns.style.display = items && items.length ? 'block' : 'none';
+    warns.innerHTML = (items || []).map(w => esc(w)).join('<br>');
+  }
+
+  async function parse() {
+    setStatus(pstatus, '');
+    const stopParse = typing(pstatus, ['Читаю файлы…', 'Сверяюсь со справкой по инфраструктуре…', 'Смотрю граф кода…', 'Готовлю поля…']);
+    showWarns([]);
+    const fd = new FormData();
+    files.forEach(f => fd.append('files', f));
+    try {
+      const r = await fetch('/api/hd/parse', { method: 'POST', body: fd, headers: auth() });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      stopParse();
+      showWarns(d.warnings);
+      if (d.fields && Object.keys(d.fields).length) {
+        offer(d.fields);
+        setStatus(pstatus, 'Агент прочитал файл и предложил поля в чате: нажмите «Ок, заполнить».', 'ok');
+      } else setStatus(pstatus, 'Агент не нашёл в файле, что заполнить. Опишите задачу в чате.', 'warn');
+    } catch (e) {
+      stopParse();
+      const texts = await Promise.all(files.map(f => f.text()));
+      const res = localParse(texts.join('\n\n'));
+      showWarns(res.warnings);
+      const found = Object.fromEntries(Object.entries(res.fields).filter(([, v]) => v));
+      if (Object.keys(found).length) offer(found);
+      setStatus(pstatus, 'Агент не разобрал файл. Простой разбор предложил поля в чате, или опишите задачу словами.', 'warn');
+      bubble('note', 'Агент не разобрал файл. Ниже предложение по простому разбору, его можно не принимать и описать задачу словами.');
+    }
+  }
+
+  // Запасной разбор: шапка-таблица «| Автор | … |», заголовок «# …», разделы «## N. …».
+  function localParse(md) {
+    const f = {}, warnings = [];
+    const t = md.match(/^#\s+(.+)$/m); if (t) f.title = t[1].trim();
+    const row = name => { const m = md.match(new RegExp('^\\|\\s*' + name + '\\s*\\|\\s*(.+?)\\s*\\|\\s*$', 'mi')); return m ? m[1] : ''; };
+    f.author = row('Автор'); f.to = row('Кому'); f.due = row('Нужно к');
+    const where = (row('Куда') + ' ' + md.slice(0, 3000)).toLowerCase();
+    f.contour = [...$('contour').options].map(o => o.value).find(v => v !== 'unknown' && where.includes(v.toLowerCase())) || (/прод/.test(where) ? 'prod' : 'unknown');
+    const sections = {};
+    md.split(/^##\s+/m).slice(1).forEach(s => {
+      const nl = s.indexOf('\n');
+      sections[s.slice(0, nl).replace(/^\d+\.\s*/, '').trim().toLowerCase()] = s.slice(nl + 1).trim();
+    });
+    const sec = (...keys) => { for (const k in sections) if (keys.some(x => k.includes(x))) return sections[k]; return ''; };
+    const parts = [['Зачем', sec('зачем', 'цель', 'контекст')], ['Что сделать', sec('порядок', 'что сделать', 'что нужно', 'задач')],
+      ['Открытые вопросы', sec('открытые вопросы', 'вопрос')]].filter(([, v]) => v);
+    f.details = parts.map(([t, v]) => `${t}:\n${v}`).join('\n\n').slice(0, 12000);
+    f.links = [...new Set(md.match(/https?:\/\/gitlab\.[^\s)\]|]+/g) || [])].join('\n');
+    if (/секрет|password|token|ключ/i.test(md) && /[A-Za-z0-9_\-]{32,}/.test(md))
+      warnings.push('В файле есть длинные строки, похожие на ключи. Проверьте, что секретов в заявке нет.');
+    return { fields: f, warnings };
+  }
+
+  // --- отправка --------------------------------------------------------------
+  $('f').addEventListener('submit', async e => {
+    e.preventDefault();
+    const sstatus = $('sstatus');
+    if (!authed) { lock(true); setStatus(sstatus, 'Сначала войдите через Telegram', 'err'); return; }
+    const missing = ['title', 'details'].filter(k => !$(k).value.trim());
+    if (missing.length) { $(missing[0]).focus(); setStatus(sstatus, 'Заполните заголовок и описание', 'err'); return; }
+    const fd = new FormData($('f'));
+    fd.append('elapsed', String(Date.now() - OPENED));
+    files.forEach(f => fd.append('files', f));
+    $('send').disabled = true;
+    setStatus(sstatus, '');
+    const stopSend = typing(sstatus, ['Отправляем заявку…', 'Рассылаем подписчикам…']);
+    try {
+      const r = await fetch('/api/hd/requests', { method: 'POST', body: fd, headers: auth() });
+      if (r.status === 401) onAuthLost();
+      const d = await r.json().catch(() => ({}));
+      stopSend();
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      setStatus(sstatus, `Заявка №${esc(d.id)} отправлена подписчикам` + (d.url ? ` · <a href="${esc(d.url)}">открыть</a>` : ''), 'ok');
+      store.set('hd-fields', null); store.set('hd-chat', []);
+      const m = me.get(); ME.forEach(k => { m[k] = $(k).value.trim(); }); me.set(m);
+    } catch (err) {
+      stopSend();
+      setStatus(sstatus, 'Не отправилось: ' + esc(err.message), 'err');
+    } finally { $('send').disabled = false; }
+  });
+
+  $('reset').addEventListener('click', () => {
+    $('f').reset(); files = []; render(); showWarns([]);
+    FIELDS.forEach(k => $(k).classList.remove('by-agent'));
+    setStatus(pstatus, ''); setStatus($('sstatus'), '');
+    store.set('hd-fields', null);
+    restoreMe();
+  });
+})();
+</script>
+</body>
+</html>
