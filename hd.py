@@ -44,6 +44,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -824,12 +825,18 @@ def boards_html() -> str:
                  f"<input type=hidden name=a value=boardsave><input type=hidden name=id value='{e(bid)}'>"
                  f"<input name=title value='{e(b.get('title', ''))}' size=26> "
                  + ("" if not bid else f"<label><input type=checkbox name=secret value=1{' checked' if b.get('secret') else ''}> секретная</label> ")
-                 + f"<div style='margin-top:6px'>{cols(b.get('columns'))}<button>Сохранить</button></div></form></td></tr>")
+                 + f"<div style='margin-top:6px'>{cols(b.get('columns'))}</div>"
+                 f"<div style='margin-top:6px'><input name=gsheet value='{e(b.get('gsheet', ''))}' placeholder='Google-таблица (ссылка, доступ на просмотр)' size=60> "
+                 f"<button>Сохранить</button></div></form>"
+                 + (f"<form method=post action='/admin/act' style='margin-top:6px'><input type=hidden name=a value=boardsync>"
+                    f"<input type=hidden name=id value='{e(bid)}'><button>Подтянуть из Google</button> "
+                    f"<span class=muted>{('последний раз ' + e(b['synced'])) if b.get('synced') else 'ещё не подтягивали'}</span></form>" if b.get('gsheet') else '')
+                 + "</td></tr>")
     return ("<h2 id=boards>Доски</h2><div class=c><table><tr><th>Адрес</th><th>Название, колонки (по порядку: черновики → новые → в работе → готово)</th></tr>"
             + rows + "</table><h3 style='font-size:15px;margin:16px 0 6px'>Новая доска</h3>"
             "<form method=post action='/admin/act'><input type=hidden name=a value=boardsave><input type=hidden name=new value=1>"
             "/tasks/<input name=id placeholder='адрес: latin, цифры, -' pattern='[a-z0-9][a-z0-9-]{0,29}' required size=18> "
-            "<input name=title placeholder='Название доски' required size=26> <label><input type=checkbox name=secret value=1> секретная (по паролю админки)</label>"
+            "<input name=title placeholder='Название доски' required size=26> <label><input type=checkbox name=secret value=1 checked> секретная (по паролю админки)</label>"
             f"<div style='margin-top:6px'>{cols(None)}<button>Создать</button></div></form>"
             "<p class=muted>Обычные доски видят все, кто вошёл через Telegram; двигают подписчики DevOps. Секретные — только с паролем админки, без уведомлений.</p></div>")
 
@@ -854,20 +861,11 @@ def keys_html() -> str:
 def admin_act(f: dict) -> str:
     a = f.get('a')
     if a == 'boardsave':
-        bid = f.get('id', '').strip().lower()
-        bs = boards()
-        if f.get('new'):
-            if not BOARD_RE.fullmatch(bid) or bid in bs:
-                raise ValueError('адрес доски: латиница, цифры и дефис, до 30 символов, не занятый')
-        elif bid not in bs:
-            raise ValueError('нет такой доски')
-        cur = bs.get(bid, {})
-        bs[bid] = {'title': (f.get('title') or cur.get('title') or bid)[:80],
-                   'secret': bool(bid) and f.get('secret') == '1',
-                   'columns': {k: (f.get(f'col_{k}') or '').strip()[:40] or cur.get('columns', {}).get(k) or v
-                               for k, v in COLS_DEFAULT.items()}}
-        jsave(STATE / 'boards.json', bs)
+        save_board(f.get('id', ''), f.get('title', ''), f.get('secret') == '1',
+                   {k: f.get(f'col_{k}') for k in COLS_DEFAULT}, bool(f.get('new')), f.get('gsheet'))
         return 'boards'
+    if a == 'boardsync':
+        raise KeyShown('Синхронизация с Google-таблицей: ' + json.dumps(sync_board(f.get('id', '')), ensure_ascii=False))
     if a == 'keynew':
         raise KeyShown(new_key(f.get('name', ''), f.get('can_move') == '1', f.get('boards', [])))
     if a == 'keyrevoke':
@@ -1165,6 +1163,226 @@ def remind_loop() -> None:
             print('напоминания:', repr(exc), file=sys.stderr, flush=True)
 
 
+# --- выгрузка доски в Excel по шаблону -------------------------------------------
+# Доска с настройкой boards[id]['xlsx'] = {template, sheet, filename} выгружается «один в один»:
+# export_xlsx.py кладёт данные карточек в строки исходной таблицы (openpyxl из vendor/).
+XLSX_STATUS = {'new': 'Запланировано', 'work': 'Принято в работу', 'done': 'Выполнено',
+               'draft': 'Не принято в работу', 'archived': 'Не сделано', 'rejected': 'Не сделано'}
+XLSX_CAT = {'Запланировано': 'new', 'Принято в работу': 'work', 'Частичное выполнение': 'work',
+            'Не прошло ревью': 'work', 'Выполнено': 'done', 'Успешно прошло ревью': 'done',
+            'Не принято в работу': 'draft', 'Не сделано': 'archived'}
+
+
+def _num(v):
+    try:
+        f = float(str(v).replace(',', '.'))
+        return int(f) if f.is_integer() else f
+    except (TypeError, ValueError):
+        return v if v not in ('—', '') else None
+
+
+def xlsx_row(r: dict) -> dict:
+    x = r.get('xlsx') or {}
+    det = r.get('details') or ''
+    desc = det.split('\n\nСтрока №')[0].strip()
+    if desc == '(описания в таблице нет)':
+        desc = ''
+    def line(label, default):
+        m = re.search(rf'^{label}: (.*)$', det, re.M)
+        return m.group(1).strip() if m else default
+    sp, left = x.get('sp'), x.get('left')
+    m = re.search(r'^План: (.+?) SP(?:, остаток: (.+))?$', det, re.M)
+    if m:
+        sp, left = m.group(1), m.group(2) if m.group(2) is not None else left
+    st = r.get('status', 'new')
+    orig = x.get('status') or ''
+    status = orig if XLSX_CAT.get(orig) == st else XLSX_STATUS.get(st, orig)
+    comment = line('Комментарий', x.get('comment') or '')
+    cms = [f"{c.get('name') or c.get('contact')}: {c.get('text')}" for c in r.get('comments', [])]
+    if cms:
+        comment = (comment + '\n' if comment else '') + 'Комментарии на доске: ' + ' | '.join(cms)
+    title = r['title']
+    if x.get('title') and x['title'][:len(title)] == title:      # не меняли — полное исходное
+        title = x['title']
+    return {'row': x.get('row'), 'B': title, 'C': desc if desc or not x else x.get('desc'), 'D': r.get('to') or '',
+            'E': _num(sp), 'F': _num(left), 'G': status, 'H': _num(line('Приоритет волны', x.get('prio'))),
+            'I': comment, 'J': line('Зависимые задачи', x.get('deps') or ''), 'K': line('Суперспринт', x.get('super') or ''),
+            'L': line('ОКР', x.get('okr') or ''), 'M': line('Связь с задачами отделов', x.get('m') or '')}
+
+
+XLSX_DEFAULT = {'template': os.environ.get('HD_XLSX_TEMPLATE', 'templates/default.xlsx'), 'sheet': os.environ.get('HD_XLSX_SHEET', '')}
+
+
+def generic_row(r: dict, cols: dict) -> dict:
+    st = r.get('status', 'new')
+    return {'B': r['title'], 'C': r.get('details') or '', 'D': r.get('to') or r.get('author') or r.get('contact') or '',
+            'G': cols.get(st) or STATUSES.get(st, st), 'H': CHOICES['urgency'].get(r.get('urgency'), ''),
+            'I': ' | '.join(f"{c.get('name') or c.get('contact')}: {c.get('text')}" for c in r.get('comments', [])),
+            'J': r.get('links') or '', 'K': CHOICES['contour'].get(r.get('contour'), ''),
+            'L': CHOICES['kind'].get(r.get('kind'), ''), 'M': f"{PUBLIC}/r/{r['slug']}"}
+
+
+def export_board_xlsx(board: str) -> tuple[bytes, str]:
+    """board '' — основная доска. С шаблоном доски — «один в один» по нему, без шаблона —
+    в формате таблицы спринта (общий шаблон), все карточки кроме архива."""
+    info = boards().get(board) or {}
+    cfg = info.get('xlsx')
+    cards = [r for d in (STATE / 'requests').iterdir()
+             if (r := jload(d / 'request.json', None)) and (r.get('board') or '') == board]
+    if cfg:
+        payload = {'rows': [], 'extra': []}
+        for r in sorted(cards, key=lambda r: r['id']):
+            row = xlsx_row(r)
+            (payload['rows'] if row['row'] else payload['extra']).append(row)
+    else:
+        cfg = XLSX_DEFAULT
+        if not (STATE / cfg['template']).exists():
+            raise ValueError('нет общего шаблона Excel (HD_XLSX_TEMPLATE)')
+        cols = {**COLS_DEFAULT, **info.get('columns', {})}
+        order = {k: i for i, k in enumerate(('draft', 'new', 'work', 'done'))}
+        live = [r for r in cards if r.get('status') not in ('archived', 'rejected')]
+        live.sort(key=lambda r: (order.get(r.get('status', 'new'), 9), r['id']))
+        title = info.get('title') or 'Доска'
+        payload = {'generic': True, 'title': f"{title} · выгрузка {time.strftime('%d.%m.%Y %H:%M')}",
+                   'sheet': title, 'rows': [generic_row(r, cols) for r in live]}
+        cfg = {**cfg, 'filename': re.sub(r'[^\w\- .·]+', '', title).strip()[:60] + '.xlsx'}
+    p = subprocess.run([sys.executable, str(HERE / 'export_xlsx.py'), str(STATE / cfg['template']), cfg['sheet']],
+                       input=json.dumps(payload, ensure_ascii=False).encode(),
+                       capture_output=True, timeout=60, env={**os.environ, 'PYTHONPATH': str(HERE / 'vendor')})
+    if p.returncode != 0:
+        raise RuntimeError(p.stderr.decode(errors='replace')[-300:])
+    return p.stdout, cfg.get('filename') or f'{board}.xlsx'
+
+
+# --- доски: сохранение и синхронизация с Google-таблицей ----------------------------
+
+GSHEET_RE = re.compile(r'https://docs\.google\.com/spreadsheets/d/([A-Za-z0-9_-]{20,})')
+
+
+def save_board(bid: str, title: str = '', secret=None, columns: dict | None = None, new: bool = False,
+               gsheet: str | None = None) -> dict:
+    """Создать/изменить доску. Прочие настройки (шаблон Excel и т.п.) сохраняются."""
+    bid = (bid or '').strip().lower()
+    bs = boards()
+    if new:
+        if not BOARD_RE.fullmatch(bid) or bid in bs:
+            raise ValueError('адрес доски: латиница, цифры и дефис, до 30 символов, не занятый')
+    elif bid not in bs:
+        raise ValueError('нет такой доски')
+    cur = dict(bs.get(bid, {}))
+    cur['title'] = (title or cur.get('title') or bid)[:80]
+    cur['secret'] = bool(bid) and (bool(secret) if secret is not None else cur.get('secret', bool(new)))
+    cols = columns or {}
+    cur['columns'] = {k: (str(cols.get(k) or '')).strip()[:40] or cur.get('columns', {}).get(k) or v
+                      for k, v in COLS_DEFAULT.items()}
+    if gsheet is not None:
+        gsheet = gsheet.strip()
+        if gsheet and not GSHEET_RE.match(gsheet):
+            raise ValueError('ссылка должна быть на Google-таблицу: https://docs.google.com/spreadsheets/d/…')
+        cur['gsheet'] = gsheet
+    bs[bid] = cur
+    jsave(STATE / 'boards.json', bs)
+    return {'id': bid or 'main', **cur}
+
+
+def sheet_details(t: dict) -> str:
+    tags = []
+    if t.get('font') == 'FFFF0000':
+        tags.append('нет в суперспринте (красный в таблице)')
+    if t.get('font') == 'FF1F6FEB':
+        tags.append('тех. бэклог, в суперспринт не входит (синий в таблице)')
+    lines = [str(t.get('desc') or '') or '(описания в таблице нет)', '',
+             f"Строка №{t['n']} таблицы спринта.", f"Статус в таблице: {t.get('status') or '—'}",
+             f"План: {t.get('sp') or '—'} SP" + (f", остаток: {t['left']}" if t.get('left') not in (None, '') else ''),
+             f"Приоритет волны: {t.get('prio') or '—'}"]
+    for k, lab in (('comment', 'Комментарий'), ('deps', 'Зависимые задачи'), ('super', 'Суперспринт'),
+                   ('okr', 'ОКР'), ('m', 'Связь с задачами отделов')):
+        if t.get(k):
+            lines.append(f'{lab}: {t[k]}')
+    if tags:
+        lines.append('Пометки: ' + '; '.join(tags))
+    return '\n'.join(lines)
+
+
+def sync_board(bid: str) -> dict:
+    """Подтянуть изменения из Google-таблицы доски. Таблица — источник полей; статус на доске
+    меняется, только если его изменили в таблице (переносы на доске не затираются)."""
+    bid = '' if bid == 'main' else bid
+    info = boards().get(bid) or {}
+    m = GSHEET_RE.match(info.get('gsheet') or '')
+    if not m:
+        raise ValueError('у доски не указана Google-таблица')
+    url = f'https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=xlsx'
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'hd-sync'}), timeout=40) as res:
+            blob = res.read()
+    except Exception as exc:
+        raise ValueError(f'не скачалась таблица ({exc}); нужен доступ «всем, у кого есть ссылка» на просмотр')
+    if not blob.startswith(b'PK'):
+        raise ValueError('Google вернул не xlsx: таблица закрыта — откройте доступ по ссылке на просмотр')
+    (STATE / 'templates').mkdir(exist_ok=True)
+    name = bid or 'main'
+    tpl = STATE / 'templates' / f'{name}.xlsx'
+    tmp = tpl.with_name(f'.{name}.download.xlsx')
+    tmp.write_bytes(blob)
+    sheet = (info.get('xlsx') or {}).get('sheet', '')
+    p = subprocess.run([sys.executable, str(HERE / 'import_xlsx.py'), str(tmp), sheet], capture_output=True, timeout=60,
+                       env={**os.environ, 'PYTHONPATH': str(HERE / 'vendor')})
+    if p.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        raise ValueError('не разобрал таблицу: ' + p.stderr.decode(errors='replace')[-200:])
+    data = json.loads(p.stdout)
+    tmp.replace(tpl)
+    cards = {r['xlsx']['n']: r for d in (STATE / 'requests').iterdir()
+             if (r := jload(d / 'request.json', None)) and (r.get('board') or '') == bid and r.get('xlsx')}
+    out = {'sheet': data['sheet'], 'rows': len(data['rows']), 'created': 0, 'updated': 0, 'moved': 0, 'missing': []}
+    seen = set()
+    for t in data['rows']:
+        seen.add(t['n'])
+        x = {k: t[k] for k in ('row', 'n', 'title', 'desc', 'sp', 'left', 'status', 'prio', 'comment', 'deps', 'super', 'okr', 'm')}
+        fields = {'title': t['title'][:200], 'details': sheet_details(t), 'to': str(t['owner'] or ''),
+                  'urgency': 'high' if str(t['prio']) == '1' else 'normal'}
+        st_new = XLSX_CAT.get(str(t['status']), 'new')
+        r = cards.get(t['n'])
+        if r is None:
+            res = create({**fields, 'kind': 'other', 'contour': 'unknown'}, [], 'Google-таблица спринта',
+                         {'chat_id': None, 'name': str(t['owner'] or 'таблица'), 'contact': 'Google-таблица'},
+                         status=st_new, notify=False, board=bid or None)
+            rr = load(res['url'].rsplit('/', 1)[1]); rr['xlsx'] = x
+            jsave(STATE / 'requests' / rr['slug'] / 'request.json', rr)
+            out['created'] += 1
+            continue
+        old = r.get('xlsx', {})
+        changed = any(str(r.get(k) or '') != str(v) for k, v in fields.items()) or any(str(old.get(k)) != str(v) for k, v in x.items())
+        if XLSX_CAT.get(str(old.get('status'))) != st_new and r.get('status') != st_new:
+            set_status(r['slug'], st_new, f"из Google-таблицы: «{t['status']}»")
+            r = load(r['slug']); out['moved'] += 1
+        if changed:
+            r.update(fields); r['xlsx'] = x
+            r.setdefault('history', []).append({'at': time.strftime('%d.%m.%Y %H:%M'), 'status': r.get('status', 'new'),
+                                                'comment': 'обновлено из Google-таблицы'})
+            jsave(STATE / 'requests' / r['slug'] / 'request.json', r)
+            out['updated'] += 1
+    out['missing'] = [cards[n]['id'] for n in cards if n not in seen]
+    bs = boards()
+    bs[bid]['xlsx'] = {**(bs[bid].get('xlsx') or {}), 'template': f'templates/{name}.xlsx', 'sheet': data['sheet'],
+                       'filename': (bs[bid].get('xlsx') or {}).get('filename') or f'{name}.xlsx'}
+    bs[bid]['synced'] = time.strftime('%d.%m.%Y %H:%M')
+    jsave(STATE / 'boards.json', bs)
+    return out
+
+
+def board_list(include_secret: bool = False, allowed: list | None = None) -> list:
+    out = []
+    for k, v in boards().items():
+        if v.get('secret') and not include_secret and k not in (allowed or []):
+            continue
+        out.append({'id': k or 'main', 'title': v.get('title', ''), 'secret': bool(v.get('secret')),
+                    'url': f"{PUBLIC}/tasks" + (f'/{k}' if k else ''), 'columns': {**COLS_DEFAULT, **v.get('columns', {})},
+                    'gsheet': bool(v.get('gsheet')), 'synced': v.get('synced', '')})
+    return out
+
+
 # --- доска /tasks -------------------------------------------------------------
 # Простая доска: Новые → В работе → Готово. Смотреть может любой вошедший через
 # Telegram, двигать и править — подписчики DevOps (они и разбирают заявки).
@@ -1252,8 +1470,10 @@ def public_task(r: dict, full: bool = False) -> dict:
 
 
 def api_board_ok(user: dict, board) -> bool:
-    if board and board not in boards():
+    if board and board != 'main' and board not in boards():
         return False
+    if board == 'main':
+        return True
     return not board or board not in secret_boards() or board in user['boards']
 
 
@@ -1264,6 +1484,27 @@ class ApiError(Exception):
 
 def api_call(user: dict, op: str, a: dict):
     """Общее ядро для REST и MCP."""
+    if op == 'boards':
+        return board_list(False, user['boards'])
+    if op == 'board_create':
+        if not user['can_move']:
+            raise ApiError(403, 'у ключа нет права менять доски')
+        b = save_board(str(a.get('id', '')), str(a.get('title', '')), bool(a.get('secret', True)),
+                       a.get('columns') or {}, True, a.get('gsheet'))
+        if b.get('secret'):
+            ks = keys()
+            for k in ks:
+                if k['id'] == user['key_id']:
+                    k.setdefault('boards', []).append(b['id'])
+            jsave(STATE / 'apikeys.json', ks)
+        return {**b, 'url': f"{PUBLIC}/tasks/{b['id']}"}
+    if op == 'board_sync':
+        bid = str(a.get('id', ''))
+        if not user['can_move']:
+            raise ApiError(403, 'у ключа нет права менять доски')
+        if not api_board_ok(user, bid):
+            raise ApiError(403, 'нет доступа к доске')
+        return sync_board(bid)
     if op == 'list':
         board = a.get('board') or None
         if not api_board_ok(user, board):
@@ -1321,7 +1562,17 @@ MCP_TOOLS = [
     {'name': 'hd_comment', 'description': 'Добавить комментарий к заявке. Нужно право can_move.',
      'inputSchema': {'type': 'object', 'required': ['slug', 'text'], 'properties': {'slug': {'type': 'string'}, 'text': {'type': 'string'}}}},
 ]
-MCP_OPS = {'hd_list_tasks': 'list', 'hd_get_task': 'get', 'hd_create_task': 'create', 'hd_move_task': 'move', 'hd_comment': 'comment'}
+MCP_TOOLS += [
+    {'name': 'hd_list_boards', 'description': 'Список досок (несекретные и разрешённые ключу секретные): id, название, колонки, привязка к Google-таблице.',
+     'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'hd_create_board', 'description': 'Создать доску. id — латиница/цифры/дефис; columns — названия колонок draft/new/work/done; secret по умолчанию true; gsheet — ссылка на Google-таблицу спринта.',
+     'inputSchema': {'type': 'object', 'required': ['id', 'title'], 'properties': {
+         'id': {'type': 'string'}, 'title': {'type': 'string'}, 'secret': {'type': 'boolean'}, 'gsheet': {'type': 'string'},
+         'columns': {'type': 'object', 'properties': {k: {'type': 'string'} for k in ('draft', 'new', 'work', 'done')}}}}},
+    {'name': 'hd_sync_board', 'description': 'Подтянуть изменения из Google-таблицы доски (таблица — источник полей; статус меняется, если его поменяли в таблице). id основной доски — main.',
+     'inputSchema': {'type': 'object', 'required': ['id'], 'properties': {'id': {'type': 'string'}}}},
+]
+MCP_OPS = {'hd_list_boards': 'boards', 'hd_create_board': 'board_create', 'hd_sync_board': 'board_sync','hd_list_tasks': 'list', 'hd_get_task': 'get', 'hd_create_task': 'create', 'hd_move_task': 'move', 'hd_comment': 'comment'}
 
 
 def mcp_handle(user: dict, msg: dict):
@@ -1359,10 +1610,14 @@ GET  /api/v1/tasks/&lt;slug&gt;
 POST /api/v1/tasks                 {"title","details","kind","contour","urgency","due","links","to","draft":false}
 POST /api/v1/tasks/&lt;slug&gt;/move      {"status":"work","comment":""}
 POST /api/v1/tasks/&lt;slug&gt;/edit      {"fields":{"title":"…"}}
-POST /api/v1/tasks/&lt;slug&gt;/comments  {"text":"…"}</pre>
+POST /api/v1/tasks/&lt;slug&gt;/comments  {"text":"…"}
+GET  /api/v1/boards
+POST /api/v1/boards                {"id":"sprint-2311","title":"…","secret":true,"columns":{"new":"…"},"gsheet":"https://docs.google.com/…"}
+POST /api/v1/boards/&lt;id&gt;/sync       подтянуть из Google-таблицы (id основной — main)</pre>
 <h2>MCP</h2><p>Streamable HTTP (JSON), адрес <code>__PUBLIC__/mcp</code>, тот же Bearer-ключ.</p>
 <pre>claude mcp add --transport http hd __PUBLIC__/mcp --header "Authorization: Bearer hd_…"</pre>
-<p>Инструменты: <code>hd_list_tasks</code>, <code>hd_get_task</code>, <code>hd_create_task</code>, <code>hd_move_task</code>, <code>hd_comment</code>.</p>
+<p>Инструменты: <code>hd_list_tasks</code>, <code>hd_get_task</code>, <code>hd_create_task</code>, <code>hd_move_task</code>, <code>hd_comment</code>,
+<code>hd_list_boards</code>, <code>hd_create_board</code>, <code>hd_sync_board</code>.</p>
 </body></html>"""
 
 
@@ -1441,6 +1696,32 @@ class H(BaseHTTPRequestHandler):
                 return
             return self.send(200, (HERE / 'tasks.html').read_text(encoding='utf-8'), 'text/html; charset=utf-8',
                              {'Cache-Control': 'no-store'})
+        if path == '/api/hd/boards':
+            if admin_ok(self.headers.get('Authorization', '')):
+                return self.send(200, board_list(True))
+            _, err = self.user()
+            if err:
+                return self.send(err[0], {'error': err[1]})
+            return self.send(200, board_list(False))
+        mx = re.fullmatch(r'/api/hd/board/([a-z0-9][a-z0-9-]{0,29})/export\.xlsx', path)
+        if mx:
+            bid = '' if mx.group(1) == 'main' else mx.group(1)
+            if bid not in boards():
+                return self.send(404, {'error': 'нет такой доски'})
+            if bid in secret_boards():
+                if not admin_ok(self.headers.get('Authorization', '')):
+                    return self.send(403, {'error': 'нет доступа'})
+            else:
+                _, err = self.user()
+                if err and not admin_ok(self.headers.get('Authorization', '')):
+                    return self.send(err[0], {'error': err[1]})
+            try:
+                blob, fname = export_board_xlsx(bid)
+            except (ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+                return self.send(400, {'error': str(exc)[:300]})
+            return self.send(200, blob, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                             {'Content-Disposition': "attachment; filename*=UTF-8''" + urllib.parse.quote(fname),
+                              'Cache-Control': 'no-store'})
         if path == '/api/hd/tasks':
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             board = q.get('board', [None])[0]
@@ -1449,7 +1730,8 @@ class H(BaseHTTPRequestHandler):
             if board and board not in bs:
                 return self.send(404, {'error': 'нет такой доски'})
             info = bs.get(board or '', {})
-            meta = {'board_title': info.get('title', ''), 'secret': bool(info.get('secret')),
+            meta = {'board_title': info.get('title', ''), 'secret': bool(info.get('secret')), 'xlsx': bool(info.get('xlsx')),
+                    'gsheet': bool(info.get('gsheet')), 'synced': info.get('synced', ''),
                     'columns': {**COLS_DEFAULT, **info.get('columns', {})}, 'labels': {k: CHOICES[k] for k in CHOICES}}
             if board and info.get('secret'):
                 if not admin_ok(self.headers.get('Authorization', '')):
@@ -1517,13 +1799,27 @@ class H(BaseHTTPRequestHandler):
             try:
                 tab = admin_act(form)
             except KeyShown as k:
-                return self.send(200, f"<!doctype html><meta charset=utf-8><style>{ADMIN_CSS}</style><div class=w><h1>Ключ выпущен</h1>"
-                                 f"<div class=c><p>Сохраните — больше его не покажем:</p><pre>{html.escape(str(k))}</pre>"
+                is_key = str(k).startswith('hd_')
+                return self.send(200, f"<!doctype html><meta charset=utf-8><style>{ADMIN_CSS}</style><div class=w><h1>{'Ключ выпущен' if is_key else 'Готово'}</h1>"
+                                 f"<div class=c><p>{'Сохраните — больше его не покажем:' if is_key else ''}</p><pre style='white-space:pre-wrap'>{html.escape(str(k))}</pre>"
                                  f"<p><a href='/admin#keys'>← В админку</a> · <a href='/api'>Документация</a></p></div></div>",
                                  'text/html; charset=utf-8', {'Cache-Control': 'no-store'})
             except ValueError as exc:
                 return self.send(400, str(exc), 'text/plain; charset=utf-8')
             return self.send(303, b'', 'text/plain', {'Location': '/tasks' if tab == 'tasks' else f'/admin#{tab}'})
+        ms = re.fullmatch(r'/api/hd/board/([a-z0-9][a-z0-9-]{0,29})/sync', path)
+        if ms:
+            bid = ms.group(1)
+            if not admin_ok(self.headers.get('Authorization', '')):
+                u, err = self.user()
+                if err:
+                    return self.send(err[0], {'error': err[1]})
+                if not can_move(u) or (bid != 'main' and bid in secret_boards()):
+                    return self.send(403, {'error': 'подтягивать могут подписчики DevOps'})
+            try:
+                return self.send(200, sync_board(bid))
+            except ValueError as exc:
+                return self.send(400, {'error': str(exc)})
         if path in ('/api/hd/tasks/move', '/api/hd/tasks/edit') and admin_ok(self.headers.get('Authorization', '')):
             try:
                 body = json.loads(self.rfile.read(size) or b'{}')
@@ -1652,6 +1948,12 @@ class H(BaseHTTPRequestHandler):
             return self.send(400, {'error': 'нужен JSON'})
         parts = path.strip('/').split('/')[2:]          # после api/v1
         try:
+            if parts == ['boards'] and method == 'GET':
+                return self.send(200, api_call(user, 'boards', q))
+            if parts == ['boards'] and method == 'POST':
+                return self.send(201, api_call(user, 'board_create', body))
+            if len(parts) == 3 and parts[0] == 'boards' and parts[2] == 'sync' and method == 'POST':
+                return self.send(200, api_call(user, 'board_sync', {'id': parts[1]}))
             if parts == ['tasks'] and method == 'GET':
                 return self.send(200, api_call(user, 'list', q))
             if parts == ['tasks'] and method == 'POST':

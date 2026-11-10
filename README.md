@@ -264,3 +264,16 @@ claude mcp add --transport http hd https://hd.example.com/mcp --header "Authoriz
 MIT, см. [LICENSE](LICENSE).
 
 3D-вид доски (`board3d.js`) — порт 3D-доски из [Kaneo](https://github.com/usekaneo/kaneo), MIT License, Copyright (c) 2024 Andrej Acevski. Спасибо автору Kaneo.
+
+## Excel и Google-таблицы
+
+- Кнопка **Excel** на доске выгружает её в `.xlsx`. Если у доски есть свой шаблон (таблица спринта), выгрузка
+  идёт «один в один» по нему: стили, выпадающие списки, объединения и формулы сохраняются, в строки задач
+  подставляются данные с доски. Без своего шаблона — в формате общего шаблона `HD_XLSX_TEMPLATE`
+  (лист `HD_XLSX_SHEET`).
+- У доски можно указать ссылку на **Google-таблицу** (доступ «всем, у кого есть ссылка» на просмотр).
+  «Из Google» / `POST /api/v1/boards/<id>/sync` / MCP `hd_sync_board` подтягивает изменения: поля задач берутся
+  из таблицы, новые строки становятся карточками, статус на доске меняется, только если его поменяли в таблице.
+- Для этого нужен `openpyxl` (чистый Python): `pip install openpyxl` или распакуйте колёса `openpyxl` и
+  `et_xmlfile` в `vendor/` рядом с `hd.py`. Сам `hd.py` остаётся на стандартной библиотеке.
+- Доски создаются в админке или через API/MCP: `POST /api/v1/boards`, `hd_create_board`.

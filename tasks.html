@@ -23,6 +23,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.4 'Fira Sans
 .top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
 h1{font:600 22px/1.2 'Fira Sans',Arial,sans-serif;color:var(--head);margin:0}
 nav{display:flex;gap:8px}
+select.nav-link{max-width:220px;cursor:pointer}
 .nav-link,.theme-btn{font:500 14px 'Fira Sans',Arial,sans-serif;color:var(--brand);text-decoration:none;background:var(--card);
   border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;min-height:38px;display:inline-flex;align-items:center}
 .sub{color:var(--muted);margin:0 0 14px;font-size:14px}
@@ -100,6 +101,9 @@ textarea{min-height:180px;resize:vertical}
   <div class="top">
     <div class="brand"><model-viewer class="logo3d" src="/logo.glb" camera-orbit="-10deg 82deg 48%" field-of-view="20deg" interaction-prompt="none" disable-zoom disable-pan camera-controls="false" shadow-intensity="0" exposure="1.1" aria-label="logo"><div slot="progress-bar"></div></model-viewer><h1>Задачи DevOps</h1></div>
     <nav>
+      <select class="nav-link" id="boardSel" aria-label="Доски" hidden></select>
+      <button class="nav-link" id="gsBtn" type="button" hidden>Из Google</button>
+      <button class="nav-link" id="xlsBtn" type="button" hidden>Excel</button>
       <button class="nav-link" id="v3dBtn" type="button">3D</button>
       <button class="nav-link" id="archBtn" type="button">Архив</button>
       <a class="nav-link" href="/">Новая заявка</a>
@@ -182,6 +186,37 @@ window.hdReady = (() => {
 
   let data = null, archive = false;
   $('archBtn').onclick = () => { archive = !archive; load(); };
+  // меню досок: несекретные (с паролем админки — и секретные)
+  fetch('/api/hd/boards', { headers: H(), credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).then(list => {
+    if (!list || list.length < 2) return;
+    const sel = $('boardSel'), cur = BOARD_ID || 'main';
+    sel.innerHTML = list.map(b => `<option value="${esc(b.url)}"${b.id === cur ? ' selected' : ''}>${esc(b.title)}${b.secret ? ' (секретная)' : ''}</option>`).join('');
+    sel.hidden = false; sel.onchange = () => { location.href = sel.value; };
+  }).catch(() => {});
+  $('gsBtn').onclick = async () => {
+    const b = $('gsBtn'); b.disabled = true; b.textContent = 'Подтягиваю…';
+    try {
+      const r = await fetch('/api/hd/board/' + (BOARD_ID || 'main') + '/sync', { method: 'POST', headers: H(), credentials: 'same-origin' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || r.status);
+      toast(`Из таблицы: новых ${d.created}, обновлено ${d.updated}, перенесено ${d.moved}` + (d.missing.length ? `, нет в таблице: №${d.missing.join(', №')}` : ''));
+      load();
+    } catch (e) { toast('Не подтянулось: ' + e.message); }
+    finally { b.disabled = false; b.textContent = 'Из Google'; }
+  };
+  // Excel «один в один» по шаблону исходной таблицы спринта
+  $('xlsBtn').onclick = async () => {
+    const b = $('xlsBtn'); b.disabled = true; b.textContent = 'Готовлю…';
+    try {
+      const r = await fetch('/api/hd/board/' + (BOARD_ID || 'main') + '/export.xlsx', { headers: H(), credentials: 'same-origin' });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.status); }
+      const cd = r.headers.get('Content-Disposition') || ''; const m = cd.match(/filename\*=UTF-8''([^;]+)/);
+      const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob());
+      a.download = m ? decodeURIComponent(m[1]) : (BOARD_ID || 'tasks') + '.xlsx'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (e) { toast('Не выгрузилось: ' + e.message); }
+    finally { b.disabled = false; b.textContent = 'Excel'; }
+  };
   async function load() {
     try {
       const qs = new URLSearchParams(); if (BOARD_ID) qs.set('board', BOARD_ID); if (archive) qs.set('archive', '1');
@@ -196,6 +231,9 @@ window.hdReady = (() => {
       data = d;
       if (d.board_title) { document.querySelector('h1').textContent = d.board_title; document.title = d.board_title; }
       if (d.columns) COLS = ['draft', 'new', 'work', 'done'].map(k => [k, d.columns[k] || k]);
+      $('xlsBtn').hidden = false;
+      $('gsBtn').hidden = !(d.gsheet && d.can_move);
+      $('gsBtn').title = d.synced ? 'Последний раз: ' + d.synced : 'Ещё не подтягивали';
       $('archBtn').textContent = archive ? '← К доске' : `Архив (${d.archived})`;
       if (archive) { $('sub').textContent = 'Архив. «Вернуть» возвращает заявку в колонку, где она была.'; renderArchive(); return; }
       $('sub').textContent = d.secret ? 'Секретная доска: видна только с паролем админки, уведомлений нет.' : d.can_move ? 'Робот выписывает черновики из топика DevOps. Перетащите в «Новые», чтобы принять, или отправьте в архив.'
