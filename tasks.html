@@ -211,6 +211,12 @@ window.hdReady = (() => {
       const r = await fetch('/api/hd/board/' + (BOARD_ID || 'main') + '/export.xlsx', { headers: H(), credentials: 'same-origin' });
       if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || r.status); }
       const cd = r.headers.get('Content-Disposition') || ''; const m = cd.match(/filename\*=UTF-8''([^;]+)/);
+      const fname = m ? decodeURIComponent(m[1]) : (BOARD_ID || 'tasks') + '.xlsx';
+      if (window.HDApp && HDApp.saveFile) {   // внутри мобильного приложения: WebView не скачивает blob
+        const buf = new Uint8Array(await r.arrayBuffer()); let bin = '';
+        for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+        HDApp.saveFile(fname, btoa(bin)); return;
+      }
       const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob());
       a.download = m ? decodeURIComponent(m[1]) : (BOARD_ID || 'tasks') + '.xlsx'; document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
